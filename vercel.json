@@ -1,0 +1,6 @@
+{
+  "functions": {
+    "app/api/agent/tick/route.ts": { "maxDuration": 60 },
+    "app/api/agent/scan/route.ts": { "maxDuration": 60 }
+  }
+}
