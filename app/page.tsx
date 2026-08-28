@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/AuthProvider";
 import type {
   AccountView,
   AgentLogEntry,
@@ -25,6 +27,24 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
 }
 
 export default function Dashboard() {
+  const { authenticated, loading, logout } = useAuth();
+  const router = useRouter();
+
+  // Gate the dashboard behind authentication.
+  useEffect(() => {
+    if (!loading && !authenticated) {
+      router.replace("/login");
+    }
+  }, [authenticated, loading, router]);
+
+  if (loading || !authenticated) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-400">
+        Authenticating…
+      </div>
+    );
+  }
+
   const [account, setAccount] = useState<AccountView | null>(null);
   const [scan, setScan] = useState<ScanRow[]>([]);
   const [best, setBest] = useState<Opportunity | null>(null);
@@ -150,6 +170,7 @@ export default function Dashboard() {
       log={log} running={running} setRunning={setRunning} busy={busy} closingId={closingId}
       error={error} autoEnter={autoEnter} setAutoEnter={setAutoEnter} isMock={isMock}
       onScan={scanNow} onRefresh={refresh} onSubmit={submitTrade} onClose={closePosition}
+      onLogout={logout}
     />
   );
 }
@@ -168,11 +189,12 @@ function DashboardBody(props: {
   error: string | null;
   autoEnter: boolean;
   setAutoEnter: (v: boolean) => void;
-  isMock: boolean;
+    isMock: boolean;
   onScan: () => void;
   onRefresh: () => void;
   onSubmit: () => void;
   onClose: (id: string) => void;
+  onLogout: () => void;
 }) {
   const { best, decision } = props;
   return (
@@ -185,12 +207,19 @@ function DashboardBody(props: {
           </h1>
           <p className="text-sm text-slate-400">Autonomous Bull Call Spread agent · Alpaca Options Alpha Agents</p>
         </div>
-        <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-2 text-center">
+                <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-2 text-center">
           <p className="text-sm font-black tracking-widest text-amber-400">⚠️ PAPER TRADING ONLY</p>
           <p className="text-[11px] text-amber-300/80">
             Alpaca paper account · no real money · {props.isMock ? "DEMO DATA MODE" : "live paper API"}
           </p>
         </div>
+        <button
+          onClick={props.onLogout}
+          className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-red-500/50 hover:text-red-300"
+          title="Log out and return to the login screen"
+        >
+          🚪 Log out
+        </button>
       </div>
 
       {props.error && (
