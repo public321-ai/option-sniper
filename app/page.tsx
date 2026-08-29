@@ -7,13 +7,19 @@ import type {
   AccountView,
   AgentLogEntry,
   Decision,
+  MarketDiscovery,
+  NewsRiskAssessment,
   Opportunity,
+  OptionsIntelligence,
   ScanRow,
   SpreadPosition,
   TickResult,
 } from "@/lib/types";
 import { DecisionBadge, fmtMoney, fmtPct, LogPanel, PositionsTable, ScoreBar, TrendBadge } from "./components/ui";
 import AlpacaMonitor from "./components/AlpacaMonitor";
+import MarketDiscoveryPanel from "./components/MarketDiscovery";
+import OptionsIntelligencePanel from "./components/OptionsIntelligence";
+import NewsRiskPanel from "./components/NewsRisk";
 
 const POLL_INTERVAL_MS = 60_000; // agent tick cadence while running
 
@@ -61,6 +67,9 @@ function DashboardContent() {
   const [closingId, setClosingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [autoEnter, setAutoEnter] = useState(true);
+  const [discovery, setDiscovery] = useState<MarketDiscovery | null>(null);
+  const [intelligence, setIntelligence] = useState<OptionsIntelligence | null>(null);
+  const [newsRisk, setNewsRisk] = useState<NewsRiskAssessment | null>(null);
   const isMock = account?.mock ?? false;
 
   const appendLog = useCallback((entries: AgentLogEntry[] | undefined) => {
@@ -74,6 +83,9 @@ function DashboardContent() {
       setBest(data.best);
       setDecision(data.decision);
       setPositions(data.positions ?? []);
+      setDiscovery(data.discovery ?? null);
+      setIntelligence(data.intelligence ?? null);
+      setNewsRisk(data.newsRisk ?? null);
       setError(null);
       appendLog(data.log);
     },
@@ -174,6 +186,7 @@ function DashboardContent() {
       account={account} scan={scan} best={best} decision={decision} positions={positions}
       log={log} running={running} setRunning={setRunning} busy={busy} closingId={closingId}
       error={error} autoEnter={autoEnter} setAutoEnter={setAutoEnter} isMock={isMock}
+      discovery={discovery} intelligence={intelligence} newsRisk={newsRisk}
       onScan={scanNow} onRefresh={refresh} onSubmit={submitTrade} onClose={closePosition}
       onLogout={logout}
     />
@@ -194,7 +207,10 @@ function DashboardBody(props: {
   error: string | null;
   autoEnter: boolean;
   setAutoEnter: (v: boolean) => void;
-    isMock: boolean;
+  isMock: boolean;
+  discovery: MarketDiscovery | null;
+  intelligence: OptionsIntelligence | null;
+  newsRisk: NewsRiskAssessment | null;
   onScan: () => void;
   onRefresh: () => void;
   onSubmit: () => void;
@@ -212,7 +228,7 @@ function DashboardBody(props: {
           </h1>
           <p className="text-sm text-slate-400">Autonomous Bull Call Spread agent · Alpaca Options Alpha Agents</p>
         </div>
-                <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-2 text-center">
+        <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-2 text-center">
           <p className="text-sm font-black tracking-widest text-amber-400">⚠️ PAPER TRADING ONLY</p>
           <p className="text-[11px] text-amber-300/80">
             Alpaca paper account · no real money · {props.isMock ? "DEMO DATA MODE" : "live paper API"}
@@ -270,7 +286,19 @@ function DashboardBody(props: {
       </div>
 
       {/* Alpaca Integration Monitor */}
-      <AlpacaMonitor decision={props.decision} positionsCount={props.positions.length} mock={props.isMock} />
+      <AlpacaMonitor
+        decision={props.decision}
+        positionsCount={props.positions.length}
+        mock={props.isMock}
+        discovery={props.discovery}
+        intelligence={props.intelligence}
+        newsRisk={props.newsRisk}
+      />
+
+      {/* Market Discovery */}
+      <div className="mb-5">
+        <MarketDiscoveryPanel discovery={props.discovery} />
+      </div>
 
       {/* Account + Best opportunity */}
       <div className="mb-5 grid gap-4 lg:grid-cols-3">
@@ -335,9 +363,17 @@ function DashboardBody(props: {
         </div>
       </div>
 
+      {/* Options Intelligence + News Risk (side by side) */}
+      <div className="mb-5 grid gap-4 lg:grid-cols-2">
+        <OptionsIntelligencePanel intelligence={props.intelligence} />
+        <NewsRiskPanel newsRisk={props.newsRisk} />
+      </div>
+
       {/* Scanner table */}
       <div className="mb-5">
-        <h2 className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">Market Scanner — SPY · QQQ · IWM · AAPL · MSFT · NVDA · TSLA</h2>
+        <h2 className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">
+          Market Scanner — {props.scan.length ? props.scan.map((r) => r.symbol).join(" · ") : "No symbols scanned yet"}
+        </h2>
         <div className="overflow-x-auto rounded-xl border border-slate-800">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-900/80 text-xs uppercase tracking-wider text-slate-400">
@@ -377,7 +413,7 @@ function DashboardBody(props: {
                           ? <span className="text-red-400" title={row.error}>error</span>
                           : <span className="text-slate-600">—</span>}
                     </td>
-                    <td className="px-3 py-2">{row.candidateScore !== null ? <ScoreBar score={row.candidateScore} /> : "—"}</td>
+                    <td className="px-3 py-2">{row.candidateScore !== null ? <ScoreBar score={Math.min(100, row.candidateScore)} /> : "—"}</td>
                   </tr>
                 ))
               )}

@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useState } from "react";
-import type { Decision } from "@/lib/types";
+import type { Decision, MarketDiscovery, NewsRiskAssessment, OptionsIntelligence } from "@/lib/types";
 
 // Local mirror of the server record shape (no server-only imports in client code)
 interface ApiRec {
@@ -43,10 +43,16 @@ export default function AlpacaMonitor({
   decision,
   positionsCount,
   mock,
+  discovery,
+  intelligence,
+  newsRisk,
 }: {
   decision: Decision | null;
   positionsCount: number;
   mock: boolean;
+  discovery: MarketDiscovery | null;
+  intelligence: OptionsIntelligence | null;
+  newsRisk: NewsRiskAssessment | null;
 }) {
   const [data, setData] = useState<MonitorData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -89,6 +95,11 @@ export default function AlpacaMonitor({
     ? records.reduce((a, r) => a + r.durationMs, 0) / records.length
     : 0;
 
+  // Count the new API categories from the records
+  const moversCalls = records.filter((r) => r.op.includes("movers") || r.op.includes("gainers") || r.op.includes("losers") || r.op.includes("active")).length;
+  const newsCalls = records.filter((r) => r.op.includes("news")).length;
+  const corpActionsCalls = records.filter((r) => r.op.includes("corporate actions")).length;
+
   return (
     <section className="mb-5 rounded-xl border border-slate-700 bg-slate-900/60 p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -122,7 +133,7 @@ export default function AlpacaMonitor({
         <MiniStat label="Last API call" value={latest ? latest.op : "—"} sub={latest ? timeStr(latest.ts) : "no calls yet"} span />
         <MiniStat label="Total API calls" value={counters ? String(counters.total) : "0"} sub={mock ? "demo data" : "Alpaca paper API"} />
         <MiniStat label="Success / Failed" value={counters ? `${counters.ok}/${counters.fail}` : "0/0"} sub="ok / fail" />
-        <MiniStat label="Market-data calls" value={counters ? String(counters.market) : "0"} sub="bars & quotes" />
+        <MiniStat label="Market-data calls" value={counters ? String(counters.market) : "0"} sub={`${moversCalls} movers · ${newsCalls} news · ${corpActionsCalls} CA`} />
         <MiniStat label="Options-data calls" value={counters ? String(counters.options) : "0"} sub="snapshots / chain" />
       </div>
 
@@ -132,7 +143,7 @@ export default function AlpacaMonitor({
           <h3 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
             Real-time API activity timeline
             {counters
-              ? ` · ${counters.account} account · ${counters.market} market · ${counters.options} options · ${counters.trading} trading`
+              ? ` · ${counters.account} account · ${counters.market} market (incl. movers/news) · ${counters.options} options · ${counters.trading} trading`
               : ""}
           </h3>
           <TimelineTable records={records} openId={openId} setOpenId={setOpenId} />
@@ -141,11 +152,17 @@ export default function AlpacaMonitor({
         <AgentPipeline
           decision={decision}
           positionsCount={positionsCount}
+          discovery={discovery}
+          intelligence={intelligence}
+          newsRisk={newsRisk}
           accountRec={records.find((r) => r.category === "account") ?? null}
           marketRec={records.find((r) => r.category === "market") ?? null}
           optionsRec={records.find((r) => r.category === "options") ?? null}
           orderRec={records.find((r) => r.op === "POST /v2/orders") ?? null}
           positionsRec={records.find((r) => r.op === "GET /v2/positions") ?? null}
+          moversRec={records.find((r) => r.op.includes("movers") || r.op.includes("gainers")) ?? null}
+          newsRec={records.find((r) => r.op.includes("news") && !r.op.includes("movers")) ?? null}
+          corpActionsRec={records.find((r) => r.op.includes("corporate actions")) ?? null}
         />
       </div>
     </section>
@@ -280,19 +297,31 @@ function TimelineTable({
 function AgentPipeline({
   decision,
   positionsCount,
+  discovery,
+  intelligence,
+  newsRisk,
   accountRec,
   marketRec,
   optionsRec,
   orderRec,
   positionsRec,
+  moversRec,
+  newsRec,
+  corpActionsRec,
 }: {
   decision: Decision | null;
   positionsCount: number;
+  discovery: MarketDiscovery | null;
+  intelligence: OptionsIntelligence | null;
+  newsRisk: NewsRiskAssessment | null;
   accountRec: ApiRec | null;
   marketRec: ApiRec | null;
   optionsRec: ApiRec | null;
   orderRec: ApiRec | null;
   positionsRec: ApiRec | null;
+  moversRec: ApiRec | null;
+  newsRec: ApiRec | null;
+  corpActionsRec: ApiRec | null;
 }) {
   const steps = [
     {
@@ -301,13 +330,22 @@ function AgentPipeline({
       state: accountRec ? (accountRec.ok ? "ok" : "fail") : "idle",
     },
     {
-      label: "ALPACA market data",
-      detail: marketRec ? `${marketRec.op.replace("GET ", "")} · ${marketRec.durationMs.toFixed(0)}ms` : "waiting…",
-      state: marketRec ? (marketRec.ok ? "ok" : "fail") : "idle",
+      label: "ALPACA market discovery",
+      detail: moversRec
+        ? `${moversRec.op} · ${moversRec.durationMs.toFixed(0)}ms` + (discovery ? ` · ${discovery.qualifiedSymbols.length} qualified` : "")
+        : "waiting…",
+      state: moversRec ? (moversRec.ok ? "ok" : "fail") : "idle",
+    },
+    {
+      label: "ALPACA news & corp actions",
+      detail: newsRec || corpActionsRec
+        ? [newsRec && `news ${newsRec.durationMs.toFixed(0)}ms`, corpActionsRec && `CA ${corpActionsRec.durationMs.toFixed(0)}ms`].filter(Boolean).join(" · ") + (newsRisk ? ` · ${newsRisk.sentiment}` : "")
+        : "waiting…",
+      state: (newsRec || corpActionsRec) ? ((newsRec?.ok ?? true) && (corpActionsRec?.ok ?? true) ? "ok" : "fail") : "idle",
     },
     {
       label: "ALPACA options chain",
-      detail: optionsRec ? `${optionsRec.op.replace("GET ", "")} · ${optionsRec.durationMs.toFixed(0)}ms` : "waiting…",
+      detail: optionsRec ? `${optionsRec.op.replace("GET ", "")} · ${optionsRec.durationMs.toFixed(0)}ms` + (intelligence ? ` · Q:${intelligence.optionsQuality}` : "") : "waiting…",
       state: optionsRec ? (optionsRec.ok ? "ok" : "fail") : "idle",
     },
     {

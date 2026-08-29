@@ -3,6 +3,76 @@
 export const SCAN_SYMBOLS = ["SPY", "QQQ", "IWM", "AAPL", "MSFT", "NVDA", "TSLA"] as const;
 export type ScanSymbol = (typeof SCAN_SYMBOLS)[number];
 
+// ---------- Dynamic Market Discovery ----------
+
+export interface MarketMover {
+  symbol: string;
+  name: string;
+  price: number;
+  changePct: number; // e.g. +5.2 => +5.2%
+  volume: number;
+  moverType: "gainer" | "loser" | "active";
+  qualified: boolean; // has options + sufficient liquidity
+  qualificationReason: string; // "Options Available → Qualified" or "Low momentum → Rejected"
+}
+
+export interface MarketDiscovery {
+  topGainers: MarketMover[];
+  topLosers: MarketMover[];
+  mostActive: MarketMover[];
+  qualifiedSymbols: string[]; // symbols that passed options/liquidity filter
+  sniperCandidates: string[]; // top symbols for the agent to scan
+}
+
+// ---------- Options Intelligence ----------
+
+export interface OptionGreeks {
+  iv: number | null; // implied volatility (annualized, e.g. 0.342 = 34.2%)
+  delta: number | null;
+  gamma: number | null;
+  theta: number | null;
+  vega: number | null;
+}
+
+export interface OptionsIntelligence {
+  symbol: string;
+  greeks: OptionGreeks;
+  optionVolume: number;
+  openInterest: number;
+  bidAskSpreadPct: number; // e.g. 0.031 = 3.1%
+  expiry: string;
+  strikeDistancePct: number; // distance of long strike from current price, e.g. 0.02 = 2% OTM
+  liquidityRating: "GOOD" | "FAIR" | "POOR";
+  volatilityRating: "LOW" | "NORMAL" | "ELEVATED" | "EXTREME";
+  optionsQuality: number; // 0-100 composite score
+}
+
+// ---------- News + Corporate Action Risk ----------
+
+export interface NewsItem {
+  headline: string;
+  source: string;
+  ts: number; // epoch ms
+  sentiment: "positive" | "neutral" | "negative";
+}
+
+export interface CorporateAction {
+  symbol: string;
+  type: "dividend" | "split" | "merger" | "earnings" | "other";
+  description: string;
+  date: string; // YYYY-MM-DD
+}
+
+export interface NewsRiskAssessment {
+  symbol: string;
+  recentNews: NewsItem[];
+  sentiment: "Positive" | "Neutral" | "Negative";
+  corporateActions: CorporateAction[];
+  corporateActionStatus: "Clear" | "Warning";
+  newsImpact: number; // -10 to +10 modifier
+  riskWarning: string | null; // e.g. "Earnings in 3 days — elevated uncertainty"
+}
+
 export interface Indicators {
   price: number;
   ma20: number | null;
@@ -23,6 +93,11 @@ export interface OptionLegQuote {
   askSize: number;
   openInterest: number;
   delta: number | null;
+  volume: number;
+  iv: number | null;
+  gamma: number | null;
+  theta: number | null;
+  vega: number | null;
 }
 
 export interface SpreadCandidate {
@@ -54,6 +129,8 @@ export interface ScoreBreakdown {
   momentum: number;
   liquidity: number;
   riskReward: number;
+  optionsQuality: number;
+  newsImpact: number;
 }
 
 export interface Opportunity {
@@ -121,4 +198,7 @@ export interface TickResult {
   positions: SpreadPosition[];
   log: AgentLogEntry[];
   mock: boolean;
+  discovery: MarketDiscovery | null;
+  intelligence: OptionsIntelligence | null;
+  newsRisk: NewsRiskAssessment | null;
 }

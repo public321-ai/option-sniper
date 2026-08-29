@@ -2,9 +2,10 @@
 // ALPACA_MOCK=true so the full agent pipeline can be validated/demoed without
 // Alpaca keys. When ALPACA_MOCK is not set, none of this code runs and all data
 // comes from the real Alpaca paper APIs.
-import type { AlpacaAccount, AlpacaPosition, OptionSnapshot, StockBar } from "./alpaca";
+import type { AlpacaAccount, AlpacaPosition, MoverStock, OptionSnapshot, StockBar } from "./alpaca";
 import { daysToExpiry } from "./alpaca";
 import { recordApiCall, type ApiCategory } from "./apiMonitor";
+import type { AlpacaCorporateAction, AlpacaNewsArticle } from "./alpaca";
 
 /** Record a mock-mode Alpaca call so the Integration Monitor shows activity in demos too. */
 function recMock(op: string, category: ApiCategory, method: string, path: string, snippet: string | null = null): void {
@@ -79,7 +80,7 @@ function normCdf(x: number): number {
   return x >= 0 ? cdf : 1 - cdf;
 }
 
-function bsCall(strike: number, spot: number, dte: number, vol: number): { price: number; delta: number } {
+function bsCall(strike: number, spot: number, dte: number, vol: number): { price: number; delta: number; gamma: number; theta: number; vega: number; iv: number } {
   const T = Math.max(dte, 1) / 365;
   const sigma = Math.max(vol * Math.sqrt(252), 0.1); // daily vol -> annualized
   const r = 0.04;
@@ -88,7 +89,11 @@ function bsCall(strike: number, spot: number, dte: number, vol: number): { price
   const d2 = d1 - sigma * sqrtT;
   const price = spot * normCdf(d1) - strike * Math.exp(-r * T) * normCdf(d2);
   const delta = normCdf(d1);
-  return { price: Math.max(0.03, price), delta };
+  // Approximate Greeks
+  const gammaVal = normCdf(d1) / (spot * sigma * sqrtT); // standard gamma approx
+  const thetaVal = -(spot * normCdf(d1) * sigma) / (2 * sqrtT) / 365; // daily theta
+  const vegaVal = spot * normCdf(d1) * sqrtT / 100; // per 1% vol change
+  return { price: Math.max(0.03, price), delta, gamma: gammaVal, theta: thetaVal, vega: vegaVal, iv: sigma };
 }
 
 function mockCall(strike: number, spot: number, dte: number, vol: number) {
@@ -128,10 +133,11 @@ export function mockCallSnapshots(underlying: string, expGte: string, expLte: st
     for (let k = -8; k <= 12; k++) {
       const strike = baseStrike + k * step;
       if (strike <= 0) continue;
-      const { price, delta } = mockCall(strike, spot, dte, cfg.vol);
+      const { price, delta, gamma: gammaVal, theta: thetaVal, vega: vegaVal, iv } = mockCall(strike, spot, dte, cfg.vol);
       const spreadPct = 0.01 + rand() * 0.04;
       const half = Math.max(0.01, (price * spreadPct) / 2);
       const oi = Math.round(150 + rand() * 9000 + (Math.abs(spot - strike) < step * 2 ? 8000 : 0));
+      const vol = Math.round(50 + rand() * 4000);
       out.push({
         symbol: occSymbol(underlying, expiry, "C", strike),
         strike,
@@ -142,6 +148,11 @@ export function mockCallSnapshots(underlying: string, expGte: string, expLte: st
         askSize: Math.round(5 + rand() * 45),
         openInterest: oi,
         delta: Math.round(Math.min(0.95, Math.max(0.02, delta)) * 100) / 100,
+        volume: vol,
+        iv: Math.round(iv * 1000) / 1000,
+        gamma: Math.round(Math.max(0, gammaVal) * 10000) / 10000,
+        theta: Math.round(thetaVal * 10000) / 10000,
+        vega: Math.round(vegaVal * 1000) / 1000,
       });
     }
   }
@@ -256,4 +267,113 @@ export function mockClosePosition(symbol: string): { id: string } {
   mockOrders.unshift(order);
   recMock("DELETE /v2/positions/{symbol}", "trading", "DELETE", `/v2/positions/${symbol}`, JSON.stringify(order));
   return { id };
+}
+
+// ---- Mock Market Discovery ----
+
+const MOVER_CONFIG: { symbol: string; name: string; price: number; changePct: number; volume: number }[] = [
+  { symbol: "NVDA", name: "NVIDIA Corp", price: 128, changePct: 5.2, volume: 85_000_000 },
+  { symbol: "AMD", name: "Advanced Micro Devices", price: 175, changePct: 4.7, volume: 62_000_000 },
+  { symbol: "META", name: "Meta Platforms", price: 530, changePct: 3.8, volume: 28_000_000 },
+  { symbol: "AVGO", name: "Broadcom Inc", price: 165, changePct: 3.1, volume: 18_000_000 },
+  { symbol: "PLTR", name: "Palantir Technologies", price: 38, changePct: 2.9, volume: 55_000_000 },
+  { symbol: "AAPL", name: "Apple Inc", price: 228, changePct: 1.1, volume: 42_000_000 },
+  { symbol: "COIN", name: "Coinbase Global", price: 245, changePct: -4.2, volume: 22_000_000 },
+  { symbol: "RIVN", name: "Rivian Automotive", price: 14, changePct: -3.8, volume: 35_000_000 },
+  { symbol: "SNAP", name: "Snap Inc", price: 11, changePct: -2.9, volume: 48_000_000 },
+  { symbol: "INTC", name: "Intel Corp", price: 22, changePct: -2.1, volume: 58_000_000 },
+  { symbol: "TSLA", name: "Tesla Inc", price: 250, changePct: 2.4, volume: 120_000_000 },
+  { symbol: "SPY", name: "S&P 500 ETF", price: 570, changePct: 0.6, volume: 95_000_000 },
+  { symbol: "QQQ", name: "Nasdaq 100 ETF", price: 480, changePct: 0.8, volume: 72_000_000 },
+];
+
+export function mockMarketMovers(): {
+  topGainers: MoverStock[];
+  topLosers: MoverStock[];
+  mostActive: MoverStock[];
+} {
+  const movers: MoverStock[] = MOVER_CONFIG.map((m) => ({
+    symbol: m.symbol,
+    name: m.name,
+    price: m.price,
+    change: Math.round(m.price * m.changePct / 100 * 100) / 100,
+    changePct: m.changePct,
+    volume: m.volume,
+  }));
+  recMock("GET market movers", "market", "GET", "/v1beta1/screener/stocks/movers?top=10");
+  recMock("GET most active", "market", "GET", "/v1beta1/screener/stocks/most-actives");
+  return {
+    topGainers: movers.filter((m) => m.changePct > 0).sort((a, b) => b.changePct - a.changePct),
+    topLosers: movers.filter((m) => m.changePct < 0).sort((a, b) => a.changePct - b.changePct),
+    mostActive: [...movers].sort((a, b) => b.volume - a.volume),
+  };
+}
+
+/** All mock symbols have options available. */
+export function mockOptionsAvailable(symbol: string): boolean {
+  return Object.hasOwn(SYMBOL_CONFIG, symbol) || MOVER_CONFIG.some((m) => m.symbol === symbol);
+}
+
+// ---- Mock News ----
+
+const MOCK_NEWS: Record<string, { headline: string; source: string; sentiment: number }[]> = {
+  NVDA: [
+    { headline: "NVIDIA beats Q2 earnings expectations with record data center revenue", source: "Reuters", sentiment: 0.8 },
+    { headline: "NVIDIA announces next-gen GPU architecture at GTC conference", source: "Bloomberg", sentiment: 0.7 },
+    { headline: "Analysts raise NVIDIA price targets after strong guidance", source: "MarketWatch", sentiment: 0.5 },
+  ],
+  AMD: [
+    { headline: "AMD gains market share in server processors", source: "CNBC", sentiment: 0.6 },
+    { headline: "AMD earnings call highlights AI chip growth", source: "Barrons", sentiment: 0.4 },
+  ],
+  AAPL: [
+    { headline: "Apple announces new iPhone lineup at fall event", source: "TechCrunch", sentiment: 0.3 },
+    { headline: "Apple Services revenue hits all-time high", source: "WSJ", sentiment: 0.5 },
+  ],
+  TSLA: [
+    { headline: "Tesla deliveries exceed Wall Street estimates", source: "Reuters", sentiment: 0.6 },
+    { headline: "Tesla recalls 200K vehicles over seatbelt issue", source: "AP", sentiment: -0.5 },
+  ],
+  META: [
+    { headline: "Meta advertising revenue surges on AI-powered targeting", source: "Bloomberg", sentiment: 0.7 },
+  ],
+  QQQ: [
+    { headline: "Tech sector leads market rally as inflation data cools", source: "CNBC", sentiment: 0.4 },
+  ],
+  SPY: [
+    { headline: "S&P 500 reaches new all-time high on broad gains", source: "MarketWatch", sentiment: 0.3 },
+  ],
+};
+
+export function mockNews(symbol: string): AlpacaNewsArticle[] {
+  const articles = MOCK_NEWS[symbol] || [
+    { headline: `No major news for ${symbol}`, source: "Wire", sentiment: 0 },
+  ];
+  recMock("GET news", "market", "GET", `/v1beta1/news?symbols=${symbol}`);
+  return articles.map((a, i) => ({
+    id: i + 1,
+    headline: a.headline,
+    source: a.source,
+    created_at: new Date(Date.now() - i * 3600000).toISOString(),
+    symbols: [symbol],
+  }));
+}
+
+// ---- Mock Corporate Actions ----
+
+export function mockCorporateActions(symbol: string): AlpacaCorporateAction[] {
+  recMock("GET corporate actions", "market", "GET", `/v1/corporate-actions?symbols=${symbol}`);
+  // Most symbols have no corporate actions
+  const caMap: Record<string, AlpacaCorporateAction[]> = {
+    AAPL: [{
+      id: "ca-aapl-div",
+      type: "cash_dividend",
+      symbol: "AAPL",
+      ex_date: new Date(Date.now() + 12 * 86400000).toISOString().slice(0, 10),
+      record_date: new Date(Date.now() + 13 * 86400000).toISOString().slice(0, 10),
+      payable_date: new Date(Date.now() + 17 * 86400000).toISOString().slice(0, 10),
+      rate: 0.25,
+    }],
+  };
+  return caMap[symbol] || [];
 }

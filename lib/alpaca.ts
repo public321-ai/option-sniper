@@ -234,6 +234,11 @@ export interface OptionSnapshot {
   askSize: number;
   openInterest: number;
   delta: number | null;
+  volume: number;
+  iv: number | null;
+  gamma: number | null;
+  theta: number | null;
+  vega: number | null;
 }
 
 const OCC_RE = /^([A-Z]+)(\d{6})([CP])(\d{8})$/;
@@ -259,7 +264,16 @@ interface RawSnapshot {
     as?: number; // ask size
   };
   openInterest?: number;
-  greeks?: { delta?: number };
+  dailyBar?: {
+    v?: number; // volume
+  };
+  greeks?: {
+    delta?: number;
+    gamma?: number;
+    theta?: number;
+    vega?: number;
+  };
+  impliedVolatility?: number; // top-level, not inside greeks
 }
 
 /**
@@ -296,10 +310,15 @@ export async function getCallSnapshots(
         ask: snap.latestQuote?.ap ?? 0,
         bidSize: snap.latestQuote?.bs ?? 0,
         askSize: snap.latestQuote?.as ?? 0,
-        // indicative feed omits open_interest/greeks -> stay 0/null; scanner
+        // indicative feed may omit open_interest/greeks -> stay 0/null; scanner
         // falls back to quote-size liquidity and a 1-sigma short-strike rule
         openInterest: snap.openInterest ?? 0,
         delta: snap.greeks?.delta ?? null,
+        volume: snap.dailyBar?.v ?? 0,
+        iv: snap.impliedVolatility ?? null,
+        gamma: snap.greeks?.gamma ?? null,
+        theta: snap.greeks?.theta ?? null,
+        vega: snap.greeks?.vega ?? null,
       });
     }
     pageToken = res.next_page_token || "";
@@ -312,4 +331,228 @@ export function daysToExpiry(expiry: string, now = new Date()): number {
   const [y, m, d] = expiry.split("-").map(Number);
   const exp = new Date(Date.UTC(y, m - 1, d, 21, 0, 0)); // ~4pm ET
   return Math.max(0, Math.ceil((exp.getTime() - now.getTime()) / 86400000));
+}
+
+// ---------- Market Discovery: Movers ----------
+
+export interface MoverStock {
+  symbol: string;
+  name: string;
+  price: number;
+  change: number;
+  changePct: number;
+  volume: number;
+}
+
+interface ScreenerMover {
+  symbol: string;
+  change: number;
+  percent_change: number;
+  price: number;
+}
+
+interface ScreenerMoverResponse {
+  gainers: ScreenerMover[];
+  losers: ScreenerMover[];
+  market_type: string;
+}
+
+interface MostActiveStock {
+  symbol: string;
+  volume: number;
+  trade_count: number;
+}
+
+interface MostActiveResponse {
+  most_actives: MostActiveStock[];
+}
+
+export async function getMarketMovers(): Promise<{
+  topGainers: MoverStock[];
+  topLosers: MoverStock[];
+  mostActive: MoverStock[];
+}> {
+  // Screener endpoint returns gainers + losers together
+  const screenerRes = await request<ScreenerMoverResponse>(
+    dataBase(),
+    "/v1beta1/screener/stocks/movers?top=10",
+    {},
+    { op: "GET market movers", category: "market" }
+  );
+  const topGainers: MoverStock[] = (screenerRes.gainers || []).map((m) => ({
+    symbol: m.symbol,
+    name: m.symbol, // screener doesn't return names
+    price: m.price,
+    change: m.change,
+    changePct: m.percent_change,
+    volume: 0,
+  }));
+  const topLosers: MoverStock[] = (screenerRes.losers || []).map((m) => ({
+    symbol: m.symbol,
+    name: m.symbol,
+    price: m.price,
+    change: m.change,
+    changePct: m.percent_change,
+    volume: 0,
+  }));
+
+  // Most actives endpoint
+  let mostActive: MoverStock[] = [];
+  try {
+    const activeRes = await request<MostActiveResponse>(
+      dataBase(),
+      "/v1beta1/screener/stocks/most-actives?by=volume&top=10",
+      {},
+      { op: "GET most active", category: "market" }
+    );
+    mostActive = (activeRes.most_actives || []).map((m) => ({
+      symbol: m.symbol,
+      name: m.symbol,
+      price: 0,
+      change: 0,
+      changePct: 0,
+      volume: m.volume,
+    }));
+  } catch {
+    // best-effort
+  }
+
+  return { topGainers, topLosers, mostActive };
+}
+
+// ---------- News ----------
+
+export interface AlpacaNewsArticle {
+  id: number;
+  headline: string;
+  source: string;
+  created_at: string;
+  symbols: string[];
+  summary?: string;
+}
+
+export async function getNewsForSymbol(symbol: string, limit = 10): Promise<AlpacaNewsArticle[]> {
+  try {
+    const res = await request<{ news?: AlpacaNewsArticle[] }>(
+      dataBase(),
+      `/v1beta1/news?symbols=${symbol}&limit=${limit}&sort=created_at&order=desc`,
+      {},
+      { op: "GET news", category: "market" }
+    );
+    return res.news || [];
+  } catch {
+    return [];
+  }
+}
+
+// ---------- Corporate Actions ----------
+
+export interface AlpacaCorporateAction {
+  id: string;
+  type: string; // e.g. "cash_dividend", "forward_split", "cash_merger"
+  symbol: string;
+  ex_date: string;
+  record_date?: string;
+  payable_date?: string;
+  rate?: number; // dividend rate or merger rate
+  new_rate?: number;
+  old_rate?: number;
+}
+
+// The /v1/corporate-actions endpoint groups results by action type
+interface CorporateActionsResponse {
+  corporate_actions: {
+    cash_dividends?: Array<{ id: string; symbol: string; ex_date: string; record_date?: string; payable_date?: string; rate: number; special: boolean; foreign: boolean; currency: string }>;
+    forward_splits?: Array<{ id: string; symbol: string; ex_date: string; new_rate: number; old_rate: number }>;
+    reverse_splits?: Array<{ id: string; symbol: string; ex_date: string; new_rate: number; old_rate: number }>;
+    cash_mergers?: Array<{ id: string; symbol: string; ex_date: string; rate: number; acquirer_symbol?: string }>;
+    stock_mergers?: Array<{ id: string; symbol: string; ex_date: string; new_rate: number; old_rate: number; acquirer_symbol?: string }>;
+    stock_and_cash_mergers?: Array<{ id: string; symbol: string; ex_date: string }>;
+    spin_offs?: Array<{ id: string; symbol: string; ex_date: string; new_symbol: string }>;
+    redemptions?: Array<{ id: string; symbol: string; ex_date: string; rate: number }>;
+    rights_distributions?: Array<{ id: string; symbol: string; ex_date: string }>;
+    reorganizations?: Array<{ id: string; symbol: string; ex_date: string }>;
+    name_changes?: Array<{ id: string; symbol: string; ex_date: string; old_symbol: string; new_symbol: string }>;
+    capital_gains_distributions?: Array<{ id: string; symbol: string; ex_date: string; long_term_rate: number; short_term_rate: number }>;
+  };
+}
+
+/** Flatten the grouped corporate-actions response into a uniform list. */
+function flattenCorporateActions(res: CorporateActionsResponse): AlpacaCorporateAction[] {
+  const ca = res.corporate_actions;
+  const out: AlpacaCorporateAction[] = [];
+
+  for (const d of ca.cash_dividends || []) {
+    out.push({ id: d.id, type: "cash_dividend", symbol: d.symbol, ex_date: d.ex_date, record_date: d.record_date, payable_date: d.payable_date, rate: d.rate });
+  }
+  for (const s of ca.forward_splits || []) {
+    out.push({ id: s.id, type: "forward_split", symbol: s.symbol, ex_date: s.ex_date, new_rate: s.new_rate, old_rate: s.old_rate });
+  }
+  for (const s of ca.reverse_splits || []) {
+    out.push({ id: s.id, type: "reverse_split", symbol: s.symbol, ex_date: s.ex_date, new_rate: s.new_rate, old_rate: s.old_rate });
+  }
+  for (const m of ca.cash_mergers || []) {
+    out.push({ id: m.id, type: "cash_merger", symbol: m.symbol, ex_date: m.ex_date, rate: m.rate });
+  }
+  for (const m of ca.stock_mergers || []) {
+    out.push({ id: m.id, type: "stock_merger", symbol: m.symbol, ex_date: m.ex_date, new_rate: m.new_rate, old_rate: m.old_rate });
+  }
+  for (const m of ca.stock_and_cash_mergers || []) {
+    out.push({ id: m.id, type: "stock_and_cash_merger", symbol: m.symbol, ex_date: m.ex_date });
+  }
+  for (const s of ca.spin_offs || []) {
+    out.push({ id: s.id, type: "spin_off", symbol: s.symbol, ex_date: s.ex_date });
+  }
+  for (const r of ca.redemptions || []) {
+    out.push({ id: r.id, type: "redemption", symbol: r.symbol, ex_date: r.ex_date, rate: r.rate });
+  }
+  for (const r of ca.reorganizations || []) {
+    out.push({ id: r.id, type: "reorganization", symbol: r.symbol, ex_date: r.ex_date });
+  }
+
+  return out;
+}
+
+export async function getCorporateActions(symbol: string): Promise<AlpacaCorporateAction[]> {
+  try {
+    const start = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const end = new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10);
+    const res = await request<CorporateActionsResponse>(
+      dataBase(),
+      `/v1/corporate-actions?symbols=${symbol}&start=${start}&end=${end}`,
+      {},
+      { op: "GET corporate actions", category: "market" }
+    );
+    return flattenCorporateActions(res);
+  } catch {
+    return [];
+  }
+}
+
+// ---------- Multi-symbol latest quotes (for movers price validation) ----------
+
+export interface MultiQuoteEntry {
+  bp: number;
+  ap: number;
+}
+
+export async function getLatestQuotes(symbols: string[]): Promise<Map<string, MultiQuoteEntry>> {
+  const out = new Map<string, MultiQuoteEntry>();
+  if (symbols.length === 0) return out;
+  try {
+    const res = await request<{ quotes?: Record<string, { bp: number; ap: number }> }>(
+      dataBase(),
+      `/v2/stocks/quotes/latest?feed=iex&symbols=${symbols.join(",")}`,
+      {},
+      { op: "GET latest quotes (multi)", category: "market" }
+    );
+    if (res.quotes) {
+      for (const [sym, q] of Object.entries(res.quotes)) {
+        out.set(sym, { bp: q.bp, ap: q.ap });
+      }
+    }
+  } catch {
+    // partial failure is fine — movers still have their own price data
+  }
+  return out;
 }

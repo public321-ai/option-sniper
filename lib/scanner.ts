@@ -1,6 +1,6 @@
 // Market scanning pipeline:
 // bars -> MA20/MA50/RSI/momentum -> bullish trend filter -> options chain ->
-// Bull Call Spread construction (14-45 DTE) -> 0-100 scoring.
+// Bull Call Spread construction (14-45 DTE) -> 0-120 scoring.
 import {
   getCallSnapshots,
   getStockBars,
@@ -98,8 +98,40 @@ export function buildSpreadCandidates(
 
     candidates.push({
       underlying,
-      longLeg: { ...long, mid: (long.bid + long.ask) / 2 },
-      shortLeg: { ...short, mid: (short.bid + short.ask) / 2 },
+      longLeg: {
+        symbol: long.symbol,
+        strike: long.strike,
+        expiry: long.expiry,
+        bid: long.bid,
+        ask: long.ask,
+        mid: (long.bid + long.ask) / 2,
+        bidSize: long.bidSize,
+        askSize: long.askSize,
+        openInterest: long.openInterest,
+        delta: long.delta,
+        volume: long.volume,
+        iv: long.iv,
+        gamma: long.gamma,
+        theta: long.theta,
+        vega: long.vega,
+      },
+      shortLeg: {
+        symbol: short.symbol,
+        strike: short.strike,
+        expiry: short.expiry,
+        bid: short.bid,
+        ask: short.ask,
+        mid: (short.bid + short.ask) / 2,
+        bidSize: short.bidSize,
+        askSize: short.askSize,
+        openInterest: short.openInterest,
+        delta: short.delta,
+        volume: short.volume,
+        iv: short.iv,
+        gamma: short.gamma,
+        theta: short.theta,
+        vega: short.vega,
+      },
       longStrike: long.strike,
       shortStrike: short.strike,
       expiry,
@@ -115,12 +147,17 @@ export function buildSpreadCandidates(
 }
 
 /**
- * Score a spread 0-100.
- * Weights: trend 25, RSI 20, momentum 20, liquidity 15, risk/reward 20.
+ * Score a spread 0-120.
+ * Weights: trend 25, RSI 20, momentum 20, liquidity 15, risk/reward 20,
+ * optionsQuality 10, newsImpact 10 = 120 max.
+ * Base score (trend+RSI+momentum+liquidity+RR) is 0-100,
+ * optionsQuality adds 0-10, newsImpact adds -5 to +5.
  */
 export function scoreOpportunity(
   cand: SpreadCandidate,
-  ind: Indicators
+  ind: Indicators,
+  optionsQualityScore: number = 0,
+  newsImpactScore: number = 0
 ): { score: number; breakdown: ScoreBreakdown } {
   // Trend (25): price>MA20>MA50 already required; reward MA separation
   const maSep = ind.ma20 !== null && ind.ma50 !== null ? (ind.ma20 - ind.ma50) / (ind.ma50 || 1) : 0;
@@ -157,16 +194,24 @@ export function scoreOpportunity(
   // Risk/reward (20): RR >= 2 => full
   const rrScore = clamp((cand.riskReward / 2) * 20, 0, 20);
 
+  // Options quality (10): from intelligence module
+  const oqScore = clamp(optionsQualityScore, 0, 10);
+
+  // News impact (-5 to +5): from news risk module
+  const niScore = clamp(newsImpactScore, -5, 5);
+
   const breakdown: ScoreBreakdown = {
     trend: Math.round(trendScore * 10) / 10,
     rsi: Math.round(rsiScore * 10) / 10,
     momentum: Math.round(momentumScore * 10) / 10,
     liquidity: Math.round(liquidityScore * 10) / 10,
     riskReward: Math.round(rrScore * 10) / 10,
+    optionsQuality: Math.round(oqScore * 10) / 10,
+    newsImpact: Math.round(niScore * 10) / 10,
   };
   const total =
-    breakdown.trend + breakdown.rsi + breakdown.momentum + breakdown.liquidity + breakdown.riskReward;
-  return { score: Math.round(clamp(total, 0, 100) * 10) / 10, breakdown };
+    breakdown.trend + breakdown.rsi + breakdown.momentum + breakdown.liquidity + breakdown.riskReward + breakdown.optionsQuality + breakdown.newsImpact;
+  return { score: Math.round(clamp(total, 0, 120) * 10) / 10, breakdown };
 }
 
 /** Analyze a single symbol end-to-end. Never throws; errors land on the row. */

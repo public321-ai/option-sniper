@@ -1,5 +1,9 @@
-// The Options Sniper agent: scan -> analyze -> score -> risk check ->
-// paper trade -> monitor -> exit. Stateless: Alpaca is the only source of truth.
+// The Options Sniper agent:
+// Dynamic Market Discovery -> Top Candidates -> News & Corporate Action Check ->
+// Options Chain -> IV + Greeks + Liquidity Analysis -> Opportunity Score ->
+// Risk Check -> Best Sniper Target -> Automatic Alpaca Paper Order ->
+// Position Monitoring -> Automatic Exit.
+// Stateless: Alpaca is the only source of truth.
 import {
   cancelOrder,
   closePosition,
@@ -22,11 +26,17 @@ import {
   mockPlaceSpread,
 } from "./mock";
 import { computeIndicators, scanAll, scoreOpportunity } from "./scanner";
+import { discoverMarkets } from "./discovery";
+import { buildOptionsIntelligence, optionsQualityScoreModifier } from "./intelligence";
+import { assessNewsRisk, newsImpactScoreModifier } from "./newsRisk";
 import type {
   AccountView,
   AgentLogEntry,
   Decision,
+  MarketDiscovery,
+  NewsRiskAssessment,
   Opportunity,
+  OptionsIntelligence,
   PositionLeg,
   ScanRow,
   SpreadPosition,
@@ -246,8 +256,14 @@ export async function exitSpread(spread: SpreadPosition, reason: string, log: Ag
 }
 
 /**
- * One full agent tick. autoEnter=true submits approved trades automatically;
- * autoExit=true closes spreads that hit an exit rule.
+ * One full agent tick with the complete pipeline:
+ * 1. Account
+ * 2. Monitor & exit positions
+ * 3. Dynamic Market Discovery
+ * 4. Scan discovered candidates
+ * 5. For best candidate: Options Intelligence + News Risk
+ * 6. Score with all factors
+ * 7. Decision & entry
  */
 export async function runAgentTick(opts: { autoEnter: boolean; autoExit: boolean }): Promise<TickResult> {
   const log: AgentLogEntry[] = [];
@@ -263,7 +279,7 @@ export async function runAgentTick(opts: { autoEnter: boolean; autoExit: boolean
     return {
       account: null, scan: [], best: null,
       decision: { action: "WAIT", reason: "Could not reach Alpaca account API" },
-      positions: [], log, mock: IS_MOCK,
+      positions: [], log, mock: IS_MOCK, discovery: null, intelligence: null, newsRisk: null,
     };
   }
 
@@ -287,14 +303,33 @@ export async function runAgentTick(opts: { autoEnter: boolean; autoExit: boolean
     logEntry("error", `Position fetch failed: ${err instanceof Error ? err.message : String(err)}`, log);
   }
 
-  // 3) Scan -> analyze -> score
-  logEntry("info", `Scanning ${SCAN_SYMBOLS.join(", ")} for bullish Bull Call Spread setups...`, log);
-  const scan: ScanRow[] = await scanAll(SCAN_SYMBOLS);
+  // 3) Dynamic Market Discovery
+  let discovery: MarketDiscovery | null = null;
+  try {
+    discovery = await discoverMarkets();
+    const gainerCount = discovery.topGainers.filter((m) => m.qualified).length;
+    const activeCount = discovery.mostActive.filter((m) => m.qualified).length;
+    logEntry("info", `Market Discovery: ${discovery.topGainers.length} gainers, ${discovery.topLosers.length} losers, ${discovery.mostActive.length} active — ${discovery.qualifiedSymbols.length} qualified for options`, log);
+    logEntry("info", `Qualified: ${gainerCount} gainers + ${activeCount} active → ${discovery.sniperCandidates.length} sniper candidates`, log);
+  } catch (err) {
+    logEntry("warn", `Market Discovery failed (falling back to default watchlist): ${err instanceof Error ? err.message : String(err)}`, log);
+  }
+
+  // 4) Scan candidates (from discovery or default watchlist)
+  const scanSymbols = discovery?.sniperCandidates.length
+    ? discovery.sniperCandidates
+    : SCAN_SYMBOLS;
+  const scanConcurrency = Math.min(scanSymbols.length, 5); // cap at 5 parallel
+  logEntry("info", `Scanning ${scanSymbols.join(", ")} for bullish Bull Call Spread setups...`, log);
+  const scan: ScanRow[] = await scanAll(scanSymbols, scanConcurrency);
   const bullish = scan.filter((r) => r.indicators.trend === "bullish");
   logEntry("info", `Bullish trend: ${bullish.length ? bullish.map((r) => r.symbol).join(", ") : "none"} | neutral/bearish: ${scan.filter((r) => r.indicators.trend !== "bullish").map((r) => r.symbol).join(", ") || "none"}`, log);
 
-  // 4) Best opportunity across the watchlist
+  // 5) Find best opportunity and enrich with intelligence + news risk
   let best: Opportunity | null = null;
+  let intelligence: OptionsIntelligence | null = null;
+  let newsRisk: NewsRiskAssessment | null = null;
+
   for (const row of scan) {
     if (row.candidate && row.candidateScore !== null) {
       if (!best || row.candidateScore > best.score) {
@@ -307,15 +342,92 @@ export async function runAgentTick(opts: { autoEnter: boolean; autoExit: boolean
     }
   }
 
-  // 5) Decision (score >= 75 and risk <= 1% of equity => ENTER, else WAIT)
+  // 6) Enrich best candidate with Options Intelligence + News Risk
+  if (best) {
+    const cand = best.candidate;
+    const sym = cand.underlying;
+
+    // Options Intelligence
+    try {
+      intelligence = buildOptionsIntelligence(
+        sym,
+        {
+          symbol: cand.longLeg.symbol,
+          strike: cand.longLeg.strike,
+          expiry: cand.longLeg.expiry,
+          bid: cand.longLeg.bid,
+          ask: cand.longLeg.ask,
+          bidSize: cand.longLeg.bidSize,
+          askSize: cand.longLeg.askSize,
+          openInterest: cand.longLeg.openInterest,
+          delta: cand.longLeg.delta,
+          volume: cand.longLeg.volume,
+          iv: cand.longLeg.iv,
+          gamma: cand.longLeg.gamma,
+          theta: cand.longLeg.theta,
+          vega: cand.longLeg.vega,
+        },
+        {
+          symbol: cand.shortLeg.symbol,
+          strike: cand.shortLeg.strike,
+          expiry: cand.shortLeg.expiry,
+          bid: cand.shortLeg.bid,
+          ask: cand.shortLeg.ask,
+          bidSize: cand.shortLeg.bidSize,
+          askSize: cand.shortLeg.askSize,
+          openInterest: cand.shortLeg.openInterest,
+          delta: cand.shortLeg.delta,
+          volume: cand.shortLeg.volume,
+          iv: cand.shortLeg.iv,
+          gamma: cand.shortLeg.gamma,
+          theta: cand.shortLeg.theta,
+          vega: cand.shortLeg.vega,
+        },
+        scan.find((r) => r.symbol === sym)?.indicators.price ?? cand.longLeg.strike
+      );
+      logEntry("info", `Options Intelligence: ${sym} IV ${intelligence.greeks.iv !== null ? (intelligence.greeks.iv * 100).toFixed(1) + "%" : "N/A"} | Quality ${intelligence.optionsQuality}/100 | Liquidity ${intelligence.liquidityRating} | Vol ${intelligence.volatilityRating}`, log);
+    } catch (err) {
+      logEntry("warn", `Options Intelligence failed for ${sym}: ${err instanceof Error ? err.message : String(err)}`, log);
+    }
+
+    // News + Corporate Action Risk
+    try {
+      newsRisk = await assessNewsRisk(sym);
+      logEntry("info", `News Risk: ${sym} sentiment ${newsRisk.sentiment} | Corp Actions ${newsRisk.corporateActionStatus} | Impact ${newsRisk.newsImpact >= 0 ? "+" : ""}${newsRisk.newsImpact}${newsRisk.riskWarning ? " | ⚠️ " + newsRisk.riskWarning : ""}`, log);
+    } catch (err) {
+      logEntry("warn", `News Risk failed for ${sym}: ${err instanceof Error ? err.message : String(err)}`, log);
+    }
+
+    // Re-score with all factors
+    const ind = scan.find((r) => r.symbol === sym)?.indicators;
+    if (ind) {
+      const oqMod = optionsQualityScoreModifier(intelligence);
+      const niMod = newsImpactScoreModifier(newsRisk);
+      const fullScore = scoreOpportunity(cand, ind, oqMod, niMod);
+      best = {
+        candidate: cand,
+        score: fullScore.score,
+        breakdown: fullScore.breakdown,
+      };
+      logEntry("info", `Full score: ${fullScore.score.toFixed(1)} (base ${fullScore.breakdown.trend + fullScore.breakdown.rsi + fullScore.breakdown.momentum + fullScore.breakdown.liquidity + fullScore.breakdown.riskReward} + options ${fullScore.breakdown.optionsQuality} + news ${fullScore.breakdown.newsImpact})`, log);
+
+      // News risk can reject the trade entirely
+      if (newsRisk?.riskWarning && newsRisk.newsImpact <= -5) {
+        logEntry("warn", `TRADE REJECTED: ${sym} — ${newsRisk.riskWarning}`, log);
+        best = null;
+      }
+    }
+  }
+
+  // 7) Decision (score >= 75 and risk <= 1% of equity => ENTER, else WAIT)
   let decision: Decision;
   if (!best) {
     decision = { action: "WAIT", reason: "No qualified Bull Call Spread found in the current market" };
-    logEntry("info", "WAIT: no qualified opportunity across the watchlist", log);
+    logEntry("info", "WAIT: no qualified opportunity across candidates", log);
   } else {
     decision = await evaluateAndEnter(best, account, positions, opts.autoEnter, log);
   }
 
   logEntry("info", `Tick complete in ${((Date.now() - startedAt.getTime()) / 1000).toFixed(1)}s`, log);
-  return { account, scan, best, decision, positions, log, mock: IS_MOCK };
+  return { account, scan, best, decision, positions, log, mock: IS_MOCK, discovery, intelligence, newsRisk };
 }
