@@ -27,7 +27,7 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
 }
 
 export default function Dashboard() {
-  const { authenticated, loading, logout } = useAuth();
+  const { authenticated, loading } = useAuth();
   const router = useRouter();
 
   // Gate the dashboard behind authentication.
@@ -45,6 +45,11 @@ export default function Dashboard() {
     );
   }
 
+  return <DashboardContent />;
+}
+
+function DashboardContent() {
+  const { logout } = useAuth();
   const [account, setAccount] = useState<AccountView | null>(null);
   const [scan, setScan] = useState<ScanRow[]>([]);
   const [best, setBest] = useState<Opportunity | null>(null);
