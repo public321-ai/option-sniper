@@ -69,8 +69,9 @@ export function buildSpreadCandidates(
   const candidates: SpreadCandidate[] = [];
   for (const [expiry, legs] of byExpiry) {
     legs.sort((a, b) => a.strike - b.strike);
-    // Long leg: ATM (first strike >= spot)
-    const long = legs.find((l) => l.strike >= spot);
+    // Long leg: ATM — strike closest to spot
+    const long = legs.reduce((best, l) =>
+      Math.abs(l.strike - spot) < Math.abs(best.strike - spot) ? l : best, legs[0]);
     if (!long) continue;
     // Short leg: >= ~3% above spot; pick delta closest to 0.30 when greeks are
     // available, otherwise the strike nearest a 1-sigma OTM move (~15% vol).
@@ -204,6 +205,11 @@ export async function analyzeSymbol(symbol: string): Promise<ScanRow> {
   }
 }
 
-export async function scanAll(symbols: readonly string[]): Promise<ScanRow[]> {
-  return Promise.all(symbols.map((s) => analyzeSymbol(s)));
+export async function scanAll(symbols: readonly string[], concurrency = 3): Promise<ScanRow[]> {
+  const results: ScanRow[] = [];
+  for (let i = 0; i < symbols.length; i += concurrency) {
+    const batch = symbols.slice(i, i + concurrency);
+    results.push(...await Promise.all(batch.map((s) => analyzeSymbol(s))));
+  }
+  return results;
 }

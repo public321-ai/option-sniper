@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 export async function POST(req: Request) {
   const log: AgentLogEntry[] = [];
   try {
-    const body = (await req.json()) as { candidate?: SpreadCandidate };
+    const body = (await req.json()) as { candidate?: SpreadCandidate; score?: number; breakdown?: { trend: number; rsi: number; momentum: number; liquidity: number; riskReward: number } };
     const cand = body.candidate;
     if (!cand?.underlying || !cand.longLeg?.symbol || !cand.shortLeg?.symbol) {
       return NextResponse.json({ error: "candidate with longLeg/shortLeg symbols required" }, { status: 400 });
@@ -21,12 +21,12 @@ export async function POST(req: Request) {
     const raw = IS_MOCK ? mockGetPositions() : await getPositions();
     const existing = await buildSpreadPositions(raw);
 
-    const fakeBest = {
+    const best = {
       candidate: cand,
-      score: 100,
-      breakdown: { trend: 0, rsi: 0, momentum: 0, liquidity: 0, riskReward: 0 },
+      score: body.score ?? 0,
+      breakdown: body.breakdown ?? { trend: 0, rsi: 0, momentum: 0, liquidity: 0, riskReward: 0 },
     };
-    const decision: Decision = await evaluateAndEnter(fakeBest, account, existing, true, log);
+    const decision: Decision = await evaluateAndEnter(best, account, existing, true, log);
     logEntry("info", `Manual submit for ${cand.underlying} spread: ${decision.reason}`, log);
     return NextResponse.json({ decision, log });
   } catch (err) {

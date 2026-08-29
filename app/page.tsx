@@ -131,7 +131,7 @@ function DashboardContent() {
     if (!best) return;
     setBusy("submit");
     try {
-      const data = await runApi("/api/trade", { candidate: best.candidate });
+      const data = await runApi("/api/trade", { candidate: best.candidate, score: best.score, breakdown: best.breakdown });
       setDecision(data.decision);
       appendLog(data.log);
       await refresh();
