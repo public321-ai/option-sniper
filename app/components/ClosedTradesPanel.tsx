@@ -82,8 +82,10 @@ export default function ClosedTradesPanel({ trades }: { trades: ClosedTrade[] })
                   <td className={`text-right font-mono font-bold ${pnlColor}`}>
                     {t.pnl >= 0 ? "+" : ""}{fmtMoney(t.pnl)}
                   </td>
-                  <td className={`text-right font-mono ${pnlColor}`}>
-                    {t.pnlPct >= 0 ? "+" : ""}{t.pnlPct.toFixed(1)}%
+                  <td className="text-right">
+                    <span className={`inline-block rounded-md px-2 py-0.5 font-mono text-xs font-bold ${t.pnl > 0 ? "bg-emerald-dim/40 text-emerald" : t.pnl < 0 ? "bg-coral-dim/40 text-coral" : "bg-graphite text-txt-muted"}`}>
+                      {t.pnlPct >= 0 ? "+" : ""}{t.pnlPct.toFixed(1)}%
+                    </span>
                   </td>
                 </tr>
               );
