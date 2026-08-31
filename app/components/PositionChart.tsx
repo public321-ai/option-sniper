@@ -211,7 +211,7 @@ export function PositionCharts({
   }
 
   return (
-    <div className="grid gap-4 md:grid-cols-2">
+    <div className={`grid gap-4 ${positions.length === 1 ? "grid-cols-1" : "lg:grid-cols-2"}`}>
       {positions.map((s) => (
         <PositionCard key={s.id} spread={s} onClose={onClose} closing={closing} />
       ))}

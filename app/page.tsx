@@ -296,6 +296,12 @@ function DashboardBody(props: {
         newsRisk={props.newsRisk}
       />
 
+      {/* Open Positions — full width below monitor for readable charts */}
+      <div className="mb-5">
+        <h2 className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">Open Positions &amp; P&amp;L (Alpaca source of truth)</h2>
+        <PositionCharts positions={props.positions} onClose={props.onClose} closing={props.closingId} />
+      </div>
+
       {/* Market Discovery */}
       <div className="mb-5">
         <MarketDiscoveryPanel discovery={props.discovery} />
@@ -423,16 +429,10 @@ function DashboardBody(props: {
         </div>
       </div>
 
-      {/* Positions + Log */}
-      <div className="grid gap-5 lg:grid-cols-2">
-        <div>
-          <h2 className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">Open Positions &amp; P&amp;L (Alpaca source of truth)</h2>
-          <PositionCharts positions={props.positions} onClose={props.onClose} closing={props.closingId} />
-        </div>
-        <div>
-          <h2 className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">Agent Activity Log</h2>
-          <LogPanel log={props.log} />
-        </div>
+      {/* Agent Log */}
+      <div>
+        <h2 className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">Agent Activity Log</h2>
+        <LogPanel log={props.log} />
       </div>
 
       <footer className="mt-8 border-t border-slate-800 pt-4 text-center text-xs text-slate-600">
