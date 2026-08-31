@@ -536,6 +536,39 @@ export interface MultiQuoteEntry {
   ap: number;
 }
 
+// ---------- Closed Trade History (Activities) ----------
+
+export interface AlpacaFillActivity {
+  id: string;
+  activity_type: string;
+  transaction_time: string;
+  symbol: string;
+  side: string; // "buy" | "sell"
+  qty: string;
+  price: string;
+  net_amount: string; // signed: negative for buys, positive for sells
+  per_share_amount?: string;
+}
+
+/**
+ * Fetch recent FILL activities from Alpaca (trade execution history).
+ * Used to reconstruct closed position P&L for bull call spreads.
+ */
+export async function getFillActivities(afterDate?: string): Promise<AlpacaFillActivity[]> {
+  const params = new URLSearchParams({
+    activity_types: "FILL",
+    direction: "desc",
+    page_size: "50",
+  });
+  if (afterDate) params.set("after", afterDate);
+  return request<AlpacaFillActivity[]>(
+    tradingBase(),
+    `/v2/account/activities?${params}`,
+    {},
+    { op: "GET /v2/activities", category: "trading" }
+  );
+}
+
 export async function getLatestQuotes(symbols: string[]): Promise<Map<string, MultiQuoteEntry>> {
   const out = new Map<string, MultiQuoteEntry>();
   if (symbols.length === 0) return out;

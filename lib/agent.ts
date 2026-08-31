@@ -9,6 +9,7 @@ import {
   closePosition,
   daysToExpiry,
   getAccount,
+  getFillActivities,
   getOpenOrders,
   getPositions,
   getStockBars,
@@ -16,6 +17,7 @@ import {
   parseOccSymbol,
   placeSpreadOrder,
   type AlpacaAccount,
+  type AlpacaFillActivity,
   type AlpacaPosition,
 } from "./alpaca";
 import {
@@ -32,6 +34,7 @@ import { assessNewsRisk, newsImpactScoreModifier } from "./newsRisk";
 import type {
   AccountView,
   AgentLogEntry,
+  ClosedTrade,
   Decision,
   MarketDiscovery,
   NewsRiskAssessment,
@@ -265,6 +268,115 @@ export async function exitSpread(spread: SpreadPosition, reason: string, log: Ag
     logEntry("error", `Exit failed for ${spread.underlying} spread: ${err instanceof Error ? err.message : String(err)}`, log);
     return false;
   }
+}
+
+/**
+ * Build closed trade history from Alpaca FILL activities.
+ * Groups fills by spread (underlying|expiry|call), separates entry vs exit,
+ * and computes realized P&L per spread. Returns up to 10 most recent.
+ */
+export async function buildClosedTrades(): Promise<ClosedTrade[]> {
+  let fills: AlpacaFillActivity[];
+  try {
+    fills = IS_MOCK ? [] : await getFillActivities();
+  } catch {
+    return [];
+  }
+
+  // Filter to option fills only (OCC symbol format: AAAYYMMDD[CP]NNNNNNN)
+  const optionFills = fills.filter((f) => parseOccSymbol(f.symbol));
+  if (optionFills.length === 0) return [];
+
+  // Group fills by spread key: underlying|expiry|call
+  const groups = new Map<string, AlpacaFillActivity[]>();
+  for (const f of optionFills) {
+    const parsed = parseOccSymbol(f.symbol);
+    if (!parsed) continue;
+    const key = `${parsed.underlying}|${parsed.expiry}|${parsed.type}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(f);
+  }
+
+  const trades: ClosedTrade[] = [];
+  for (const [key, legs] of groups) {
+    // Need at least 4 fills for a complete spread: 2 entry + 2 exit
+    if (legs.length < 4) continue;
+
+    // Sort by time ascending
+    legs.sort((a, b) => new Date(a.transaction_time).getTime() - new Date(b.transaction_time).getTime());
+
+    // Separate entry (buy-side net debit) and exit (sell-side net credit)
+    // For a bull call spread entry: BUY long (buy) + SELL short (sell) = net debit
+    // For exit: SELL long (sell) + BUY short (buy) = net credit
+    const entryFills: AlpacaFillActivity[] = [];
+    const exitFills: AlpacaFillActivity[] = [];
+
+    // First pair of fills (one buy, one sell) = entry; second pair = exit
+    let buyCount = 0;
+    let sellCount = 0;
+    let entryComplete = false;
+    for (const f of legs) {
+      if (!entryComplete) {
+        entryFills.push(f);
+        if (f.side === "buy") buyCount++;
+        if (f.side === "sell") sellCount++;
+        if (buyCount >= 1 && sellCount >= 1) entryComplete = true;
+      } else {
+        exitFills.push(f);
+      }
+    }
+
+    if (entryFills.length < 2 || exitFills.length < 2) continue;
+
+    const entryNet = entryFills.reduce((sum, f) => sum + Number(f.net_amount), 0);
+    const exitNet = exitFills.reduce((sum, f) => sum + Number(f.net_amount), 0);
+
+    // For a debit spread, entryNet is negative (paid), exitNet is positive (received)
+    const realizedPnl = exitNet + entryNet; // both signed correctly already
+    const entryDebit = Math.abs(entryNet) / 100; // per-share debit (net_amount is total, /100 for contract multiplier)
+    const exitCredit = exitNet / 100; // per-share credit
+
+    if (entryDebit === 0) continue;
+
+    const parts = key.split("|");
+    const underlying = parts[0];
+    const expiry = parts[1];
+
+    // Extract strikes from the fills
+    const parsedLegs = entryFills.map((f) => parseOccSymbol(f.symbol)).filter(Boolean);
+    const longStrike = parsedLegs.find((p) => p!.strike < Math.max(...parsedLegs.map((l) => l!.strike)))?.strike
+      ?? Math.min(...parsedLegs.map((p) => p!.strike));
+    const shortStrike = Math.max(...parsedLegs.map((p) => p!.strike));
+
+    const qty = Math.round(Math.abs(Number(entryFills.find((f) => f.side === "buy")?.qty ?? 1)));
+
+    trades.push({
+      id: key,
+      underlying,
+      longStrike,
+      shortStrike,
+      expiry,
+      entryDate: entryFills[0].transaction_time,
+      exitDate: exitFills[exitFills.length - 1].transaction_time,
+      entryDebit: Math.round(entryDebit * 1000) / 1000,
+      exitCredit: Math.round(exitCredit * 1000) / 1000,
+      qty,
+      pnl: Math.round(realizedPnl * 100) / 100,
+      pnlPct: Math.round((realizedPnl / Math.abs(entryNet)) * 10000) / 100,
+      legs: [...entryFills, ...exitFills].map((f) => ({
+        symbol: f.symbol,
+        side: f.side,
+        qty: Number(f.qty),
+        price: Number(f.price),
+        netAmount: Number(f.net_amount),
+      })),
+    });
+  }
+
+  // Sort by exit date descending, return last 10
+  return trades
+    .sort((a, b) => new Date(b.exitDate).getTime() - new Date(a.exitDate).getTime())
+    .slice(0, 10);
 }
 
 /**

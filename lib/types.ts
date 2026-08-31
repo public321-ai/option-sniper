@@ -186,6 +186,22 @@ export interface SpreadPosition {
   exitSignal: string | null; // reason if agent wants to exit
 }
 
+export interface ClosedTrade {
+  id: string; // underlying|expiry|call
+  underlying: string;
+  longStrike: number;
+  shortStrike: number;
+  expiry: string;
+  entryDate: string; // ISO date of first fill
+  exitDate: string; // ISO date of last fill
+  entryDebit: number; // net debit per share at entry
+  exitCredit: number; // net credit per share at exit
+  qty: number; // number of spreads
+  pnl: number; // total realized $ P&L
+  pnlPct: number; // realized % P&L
+  legs: { symbol: string; side: string; qty: number; price: number; netAmount: number }[];
+}
+
 export interface AgentLogEntry {
   ts: number;
   level: "info" | "success" | "warn" | "error" | "trade";

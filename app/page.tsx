@@ -6,6 +6,7 @@ import { useAuth } from "@/components/AuthProvider";
 import type {
   AccountView,
   AgentLogEntry,
+  ClosedTrade,
   Decision,
   MarketDiscovery,
   NewsRiskAssessment,
@@ -18,6 +19,7 @@ import type {
 import { DecisionBadge, fmtMoney, fmtPct, LogPanel, ScoreBar, TrendBadge } from "./components/ui";
 import { PositionCharts } from "./components/PositionChart";
 import { saveAnalysisData } from "@/lib/analysisStore";
+import ClosedTradesPanel from "./components/ClosedTradesPanel";
 import AlpacaMonitor from "./components/AlpacaMonitor";
 
 const POLL_INTERVAL_MS = 60_000; // agent tick cadence while running
@@ -61,6 +63,7 @@ function DashboardContent() {
   const [decision, setDecision] = useState<Decision | null>(null);
   const [positions, setPositions] = useState<SpreadPosition[]>([]);
   const [log, setLog] = useState<AgentLogEntry[]>([]);
+  const [closedTrades, setClosedTrades] = useState<ClosedTrade[]>([]);
   const [running, setRunningState] = useState(false);
   const [busy, setBusy] = useState<"scan" | "tick" | "submit" | "refresh" | null>(null);
   const [closingId, setClosingId] = useState<string | null>(null);
@@ -145,6 +148,15 @@ function DashboardContent() {
     }
   }, [runApi]);
 
+  const fetchClosedTrades = useCallback(async () => {
+    try {
+      const data = await runApi("/api/positions/closed");
+      setClosedTrades(data.closed ?? []);
+    } catch {
+      // best-effort — closed trades are supplementary
+    }
+  }, [runApi]);
+
   const scanNow = useCallback(async () => {
     setBusy("scan");
     try {
@@ -188,19 +200,35 @@ function DashboardContent() {
       try {
         appendLog((await runApi("/api/positions/close", { spreadId: id })).log);
         await refresh();
+        await fetchClosedTrades();
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
         setClosingId(null);
       }
     },
-    [runApi, appendLog, refresh]
+    [runApi, appendLog, refresh, fetchClosedTrades]
   );
 
   // initial load + agent loop (client-driven polling keeps the app serverless)
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    void fetchClosedTrades();
+  }, [refresh, fetchClosedTrades]);
+
+  // Dedicated position refresh every 10s for real-time P&L updates
+  useEffect(() => {
+    const id = setInterval(async () => {
+      try {
+        const data = await runApi("/api/account");
+        setAccount(data.account);
+        setPositions(data.positions ?? []);
+      } catch {
+        // best-effort silent refresh
+      }
+    }, 10_000);
+    return () => clearInterval(id);
+  }, [runApi]);
 
   useEffect(() => {
     if (!running) return;
@@ -215,6 +243,7 @@ function DashboardContent() {
       log={log} running={running} setRunning={setRunning} busy={busy} closingId={closingId}
       error={error} autoEnter={autoEnter} setAutoEnter={setAutoEnter} isMock={isMock}
       discovery={discovery} intelligence={intelligence} newsRisk={newsRisk}
+      closedTrades={closedTrades}
       onScan={scanNow} onRefresh={refresh} onSubmit={submitTrade} onClose={closePosition}
       onLogout={logout}
     />
@@ -228,6 +257,7 @@ function DashboardBody(props: {
   decision: Decision | null;
   positions: SpreadPosition[];
   log: AgentLogEntry[];
+  closedTrades: ClosedTrade[];
   running: boolean;
   setRunning: (fn: (r: boolean) => boolean) => void;
   busy: string | null;
@@ -328,6 +358,12 @@ function DashboardBody(props: {
         intelligence={props.intelligence}
         newsRisk={props.newsRisk}
       />
+
+      {/* Last 10 Closed Trades — P&L history */}
+      <div className="mb-5">
+        <h2 className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">Closed Trades — Last 10 P&amp;L</h2>
+        <ClosedTradesPanel trades={props.closedTrades} />
+      </div>
 
       {/* Open Positions — full width below monitor for readable charts */}
       <div className="mb-5">
