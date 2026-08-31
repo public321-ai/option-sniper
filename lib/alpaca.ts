@@ -32,13 +32,13 @@ interface CallMeta {
 }
 
 async function request<T>(base: string, path: string, init: RequestInit = {}, meta: CallMeta): Promise<T> {
-  const { key, secret } = requireKeys();
   const started = performance.now();
   let status: number | null = null;
   let ok = false;
   let text = "";
   let errorMsg: string | null = null;
   try {
+    const { key, secret } = requireKeys();
     const res = await fetch(`${base}${path}`, {
       ...init,
       headers: {
@@ -435,7 +435,7 @@ export async function getNewsForSymbol(symbol: string, limit = 10): Promise<Alpa
   try {
     const res = await request<{ news?: AlpacaNewsArticle[] }>(
       dataBase(),
-      `/v1beta1/news?symbols=${symbol}&limit=${limit}&sort=created_at&order=desc`,
+      `/v1beta1/news?symbols=${symbol}&limit=${limit}`,
       {},
       { op: "GET news", category: "market" }
     );

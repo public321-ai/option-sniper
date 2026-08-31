@@ -100,8 +100,22 @@ export default function AlpacaMonitor({
   const newsCalls = records.filter((r) => r.op.includes("news")).length;
   const corpActionsCalls = records.filter((r) => r.op.includes("corporate actions")).length;
 
+  // Market-closed detection: weekends (Sat/Sun) or US market holidays.
+  // Alpaca movers/screener endpoints return empty data when markets are closed.
+  const now = new Date();
+  const dayOfWeek = now.getUTCDay(); // 0=Sun, 6=Sat
+  const marketClosed = dayOfWeek === 0 || dayOfWeek === 6;
+
   return (
     <section className="mb-5 rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+      {marketClosed && (
+        <div className="mb-3 flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+          <span className="text-base">⏸</span>
+          <span>
+            <strong>Market closed</strong> — {dayOfWeek === 0 ? "Sunday" : "Saturday"}: Movers/screener APIs return empty data. Scans fall back to the default watchlist. Options snapshots use indicative pricing only.
+          </span>
+        </div>
+      )}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-xs font-bold uppercase tracking-widest text-slate-300">
           📡 Alpaca Integration Monitor{" "}
@@ -155,14 +169,14 @@ export default function AlpacaMonitor({
           discovery={discovery}
           intelligence={intelligence}
           newsRisk={newsRisk}
-          accountRec={records.find((r) => r.category === "account") ?? null}
-          marketRec={records.find((r) => r.category === "market") ?? null}
-          optionsRec={records.find((r) => r.category === "options") ?? null}
-          orderRec={records.find((r) => r.op === "POST /v2/orders") ?? null}
-          positionsRec={records.find((r) => r.op === "GET /v2/positions") ?? null}
-          moversRec={records.find((r) => r.op.includes("movers") || r.op.includes("gainers")) ?? null}
-          newsRec={records.find((r) => r.op.includes("news") && !r.op.includes("movers")) ?? null}
-          corpActionsRec={records.find((r) => r.op.includes("corporate actions")) ?? null}
+          accountRec={[...records].reverse().find((r) => r.category === "account") ?? null}
+          marketRec={[...records].reverse().find((r) => r.category === "market") ?? null}
+          optionsRec={[...records].reverse().find((r) => r.category === "options") ?? null}
+          orderRec={[...records].reverse().find((r) => r.op === "POST /v2/orders") ?? null}
+          positionsRec={[...records].reverse().find((r) => r.op === "GET /v2/positions") ?? null}
+          moversRec={[...records].reverse().find((r) => r.op.includes("movers") || r.op.includes("gainers")) ?? null}
+          newsRec={[...records].reverse().find((r) => r.op.includes("news") && !r.op.includes("movers")) ?? null}
+          corpActionsRec={[...records].reverse().find((r) => r.op.includes("corporate actions")) ?? null}
         />
       </div>
     </section>
@@ -323,30 +337,51 @@ function AgentPipeline({
   newsRec: ApiRec | null;
   corpActionsRec: ApiRec | null;
 }) {
+  // A scan/tick has completed when a decision exists (even if WAIT).
+  // Use BOTH the in-memory API log records AND the tick-result props to
+  // determine step status — the log can be empty after HMR/Vercel cold start,
+  // but the props always reflect what the last tick actually did.
+  const scanComplete = decision !== null;
+  const noBullishCandidate = scanComplete && !intelligence && !newsRisk;
+
   const steps = [
     {
       label: "AGENT reads account",
-      detail: accountRec ? `${accountRec.op} · ${accountRec.durationMs.toFixed(0)}ms` : "waiting…",
-      state: accountRec ? (accountRec.ok ? "ok" : "fail") : "idle",
+      detail: accountRec ? `${accountRec.op} · ${accountRec.durationMs.toFixed(0)}ms` : scanComplete ? "completed (log evicted)" : "waiting…",
+      state: accountRec ? (accountRec.ok ? "ok" : "fail") : (scanComplete ? "ok" : "idle"),
     },
     {
       label: "ALPACA market discovery",
       detail: moversRec
         ? `${moversRec.op} · ${moversRec.durationMs.toFixed(0)}ms` + (discovery ? ` · ${discovery.qualifiedSymbols.length} qualified` : "")
-        : "waiting…",
-      state: moversRec ? (moversRec.ok ? "ok" : "fail") : "idle",
+        : discovery
+          ? `${discovery.qualifiedSymbols.length} qualified · ${discovery.sniperCandidates.length} candidates`
+          : noBullishCandidate
+            ? "no movers data (market may be closed)"
+            : "waiting…",
+      state: moversRec ? (moversRec.ok ? "ok" : "fail") : (discovery ? "ok" : (noBullishCandidate ? "warn" : "idle")),
     },
     {
       label: "ALPACA news & corp actions",
       detail: newsRec || corpActionsRec
         ? [newsRec && `news ${newsRec.durationMs.toFixed(0)}ms`, corpActionsRec && `CA ${corpActionsRec.durationMs.toFixed(0)}ms`].filter(Boolean).join(" · ") + (newsRisk ? ` · ${newsRisk.sentiment}` : "")
-        : "waiting…",
-      state: (newsRec || corpActionsRec) ? ((newsRec?.ok ?? true) && (corpActionsRec?.ok ?? true) ? "ok" : "fail") : "idle",
+        : newsRisk
+          ? `sentiment ${newsRisk.sentiment} · CA ${newsRisk.corporateActionStatus}`
+          : noBullishCandidate
+            ? "skipped — no bullish candidate found"
+            : "waiting…",
+      state: (newsRec || corpActionsRec) ? ((newsRec?.ok ?? true) && (corpActionsRec?.ok ?? true) ? "ok" : "fail") : (newsRisk ? "ok" : (noBullishCandidate ? "warn" : "idle")),
     },
     {
       label: "ALPACA options chain",
-      detail: optionsRec ? `${optionsRec.op.replace("GET ", "")} · ${optionsRec.durationMs.toFixed(0)}ms` + (intelligence ? ` · Q:${intelligence.optionsQuality}` : "") : "waiting…",
-      state: optionsRec ? (optionsRec.ok ? "ok" : "fail") : "idle",
+      detail: optionsRec
+        ? `${optionsRec.op.replace("GET ", "")} · ${optionsRec.durationMs.toFixed(0)}ms` + (intelligence ? ` · Q:${intelligence.optionsQuality}` : "")
+        : intelligence
+          ? `Q:${intelligence.optionsQuality} · liq ${intelligence.liquidityRating} · vol ${intelligence.volatilityRating}`
+          : noBullishCandidate
+            ? "skipped — no bullish candidate found"
+            : "waiting…",
+      state: optionsRec ? (optionsRec.ok ? "ok" : "fail") : (intelligence ? "ok" : (noBullishCandidate ? "warn" : "idle")),
     },
     {
       label: "AGENT decision",
@@ -359,15 +394,19 @@ function AgentPipeline({
         ? `${orderRec.op} · ${orderRec.ok ? "SUCCESS" : "FAIL"} · ${orderRec.durationMs.toFixed(0)}ms`
         : decision?.action === "ENTER"
           ? "submitting…"
-          : "awaiting ENTER signal",
-      state: orderRec ? (orderRec.ok ? "ok" : "fail") : "idle",
+          : noBullishCandidate
+            ? "skipped — no entry signal"
+            : "awaiting ENTER signal",
+      state: orderRec ? (orderRec.ok ? "ok" : "fail") : (noBullishCandidate ? "warn" : "idle"),
     },
     {
       label: "ALPACA monitor positions",
       detail: positionsRec
         ? `${positionsRec.op} · ${positionsCount} open spread(s) · ${positionsRec.durationMs.toFixed(0)}ms`
-        : "waiting…",
-      state: positionsRec ? (positionsRec.ok ? "ok" : "fail") : "idle",
+        : scanComplete
+          ? `${positionsCount} open spread(s)`
+          : "waiting…",
+      state: positionsRec ? (positionsRec.ok ? "ok" : "fail") : (scanComplete ? "ok" : "idle"),
     },
   ];
   return (
