@@ -299,9 +299,15 @@ export async function evaluateAndEnter(
     return { action: "WAIT", reason: "Position size rounds to zero spreads at this risk limit", score, riskPct };
   }
   const existingOnUnderlying = existingSpreads.filter((s) => s.underlying === cand.underlying);
-  // Count unique spreads (group by groupId to avoid double-counting paired legs)
-  const uniqueGroupIds = new Set(existingOnUnderlying.map((s) => s.groupId || s.id));
-  const uniqueCount = uniqueGroupIds.size;
+  // Count unique spreads (group by groupId to avoid double-counting paired legs).
+  // Unpaired legs (no groupId) each count as 1 position — they still occupy risk.
+  const uniqueGroupIds = new Set<string>();
+  let unpairedCount = 0;
+  for (const s of existingOnUnderlying) {
+    if (s.groupId) uniqueGroupIds.add(s.groupId);
+    else unpairedCount++;
+  }
+  const uniqueCount = uniqueGroupIds.size + unpairedCount;
   if (uniqueCount >= MAX_POSITIONS_PER_UNDERLYING) {
     logEntry("info", `WAIT: already have ${uniqueCount}/${MAX_POSITIONS_PER_UNDERLYING} open ${cand.underlying} positions`, log);
     return { action: "WAIT", reason: `${uniqueCount} open ${cand.underlying} position(s) — limit ${MAX_POSITIONS_PER_UNDERLYING} per underlying`, score, riskPct };
