@@ -51,6 +51,7 @@ const ENTRY_SLIPPAGE = 0.05; // per-share cushion above quoted debit to improve 
 const PROFIT_TARGET_PCT = Number(process.env.AGENT_PROFIT_PCT || 0.25); // take profit at +25%
 const MAX_LOSS_PCT = Number(process.env.AGENT_MAX_LOSS_PCT || 0.20); // cut loss at -20%
 const TIME_EXIT_DTE = Number(process.env.AGENT_TIME_EXIT_DTE || 7); // time exit at <= N DTE
+const MAX_POSITIONS_PER_UNDERLYING = Number(process.env.AGENT_MAX_POS_PER_UNDERLYING || 3); // max concurrent spreads per underlying
 
 export function logEntry(level: AgentLogEntry["level"], message: string, log: AgentLogEntry[]): void {
   log.push({ ts: Date.now(), level, message });
@@ -178,9 +179,10 @@ export async function evaluateAndEnter(
     logEntry("warn", `WAIT: ${label} position sizing rounds to 0 spreads`, log);
     return { action: "WAIT", reason: "Position size rounds to zero spreads at this risk limit", score, riskPct };
   }
-  if (existingSpreads.some((s) => s.underlying === cand.underlying)) {
-    logEntry("info", `WAIT: already have an open ${cand.underlying} position - no pyramiding`, log);
-    return { action: "WAIT", reason: `Open ${cand.underlying} position already exists`, score, riskPct };
+  const existingCount = existingSpreads.filter((s) => s.underlying === cand.underlying).length;
+  if (existingCount >= MAX_POSITIONS_PER_UNDERLYING) {
+    logEntry("info", `WAIT: already have ${existingCount}/${MAX_POSITIONS_PER_UNDERLYING} open ${cand.underlying} positions`, log);
+    return { action: "WAIT", reason: `${existingCount} open ${cand.underlying} position(s) — limit ${MAX_POSITIONS_PER_UNDERLYING} per underlying`, score, riskPct };
   }
 
   if (!autoEnter) {
