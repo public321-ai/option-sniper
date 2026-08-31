@@ -15,7 +15,8 @@ import type {
   SpreadPosition,
   TickResult,
 } from "@/lib/types";
-import { DecisionBadge, fmtMoney, fmtPct, LogPanel, PositionsTable, ScoreBar, TrendBadge } from "./components/ui";
+import { DecisionBadge, fmtMoney, fmtPct, LogPanel, ScoreBar, TrendBadge } from "./components/ui";
+import { PositionCharts } from "./components/PositionChart";
 import AlpacaMonitor from "./components/AlpacaMonitor";
 import MarketDiscoveryPanel from "./components/MarketDiscovery";
 import OptionsIntelligencePanel from "./components/OptionsIntelligence";
@@ -426,7 +427,7 @@ function DashboardBody(props: {
       <div className="grid gap-5 lg:grid-cols-2">
         <div>
           <h2 className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">Open Positions &amp; P&amp;L (Alpaca source of truth)</h2>
-          <PositionsTable positions={props.positions} onClose={props.onClose} closing={props.closingId} />
+          <PositionCharts positions={props.positions} onClose={props.onClose} closing={props.closingId} />
         </div>
         <div>
           <h2 className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">Agent Activity Log</h2>
