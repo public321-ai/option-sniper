@@ -61,15 +61,43 @@ function DashboardContent() {
   const [decision, setDecision] = useState<Decision | null>(null);
   const [positions, setPositions] = useState<SpreadPosition[]>([]);
   const [log, setLog] = useState<AgentLogEntry[]>([]);
-  const [running, setRunning] = useState(false);
+  const [running, setRunningState] = useState(false);
   const [busy, setBusy] = useState<"scan" | "tick" | "submit" | "refresh" | null>(null);
   const [closingId, setClosingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [autoEnter, setAutoEnter] = useState(true);
+  const [autoEnter, setAutoEnterState] = useState(true);
   const [discovery, setDiscovery] = useState<MarketDiscovery | null>(null);
   const [intelligence, setIntelligence] = useState<OptionsIntelligence | null>(null);
   const [newsRisk, setNewsRisk] = useState<NewsRiskAssessment | null>(null);
   const isMock = account?.mock ?? false;
+
+  // Persist running/autoEnter to sessionStorage so the agent survives
+  // page refreshes and navigation to /analysis and back.
+  const setRunning = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
+    setRunningState((prev) => {
+      const next = typeof val === "function" ? val(prev) : val;
+      try { sessionStorage.setItem("sniper-agent-running", next ? "1" : "0"); } catch {}
+      return next;
+    });
+  }, []);
+
+  const setAutoEnter = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
+    setAutoEnterState((prev) => {
+      const next = typeof val === "function" ? val(prev) : val;
+      try { sessionStorage.setItem("sniper-auto-enter", next ? "1" : "0"); } catch {}
+      return next;
+    });
+  }, []);
+
+  // Restore persisted state on mount
+  useEffect(() => {
+    try {
+      const r = sessionStorage.getItem("sniper-agent-running");
+      const a = sessionStorage.getItem("sniper-auto-enter");
+      if (r === "1") setRunningState(true);
+      if (a === "0") setAutoEnterState(false);
+    } catch {}
+  }, []);
 
   const appendLog = useCallback((entries: AgentLogEntry[] | undefined) => {
     if (entries?.length) setLog((prev) => [...entries, ...prev].slice(0, 300));
