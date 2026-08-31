@@ -52,8 +52,8 @@ function tvEmbedUrl(underlying: string) {
   return `https://s.tradingview.com/widgetembed/?${params}`;
 }
 
-/** Strike zone overlay — horizontal lines at long/short strikes with shaded profit zone */
-function StrikeZoneOverlay({ spread }: { spread: SpreadPosition }) {
+/** Chart overlay showing strike zone, stop loss, and profit target levels */
+function ChartOverlay({ spread }: { spread: SpreadPosition }) {
   const longStrike = spread.longStrike;
   const shortStrike = spread.shortStrike;
   const breakeven = longStrike + spread.entryDebit;
@@ -62,24 +62,27 @@ function StrikeZoneOverlay({ spread }: { spread: SpreadPosition }) {
 
   const priceMin = longStrike - padding;
   const priceMax = shortStrike + padding;
-  const priceToX = (p: number) => ((p - priceMin) / (priceMax - priceMin)) * 300;
+  const px = (p: number) => ((p - priceMin) / (priceMax - priceMin)) * 300;
 
   return (
     <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-center pt-1">
-      <svg width="100%" height="62" viewBox="0 0 300 60" preserveAspectRatio="none" className="opacity-60">
-        <rect
-          x={priceToX(longStrike)}
-          y={0}
-          width={priceToX(shortStrike) - priceToX(longStrike)}
-          height={60}
-          fill="rgba(0, 212, 170, 0.06)"
-        />
-        <line x1={priceToX(longStrike)} y1="0" x2={priceToX(longStrike)} y2="60" stroke="#00d4aa" strokeWidth="1" strokeDasharray="3,3" />
-        <line x1={priceToX(shortStrike)} y1="0" x2={priceToX(shortStrike)} y2="60" stroke="#ff6b6b" strokeWidth="1" strokeDasharray="3,3" />
-        <line x1={priceToX(breakeven)} y1="0" x2={priceToX(breakeven)} y2="60" stroke="#fbbf24" strokeWidth="1" strokeDasharray="2,4" />
-        <text x={priceToX(longStrike) + 3} y="10" fill="#00d4aa" fontSize="7" fontFamily="monospace">L ${longStrike}</text>
-        <text x={priceToX(shortStrike) + 3} y="10" fill="#ff6b6b" fontSize="7" fontFamily="monospace">S ${shortStrike}</text>
-        <text x={priceToX(breakeven) + 3} y="20" fill="#fbbf24" fontSize="7" fontFamily="monospace">BE ${breakeven.toFixed(1)}</text>
+      <svg width="100%" height="62" viewBox="0 0 300 60" preserveAspectRatio="none" className="opacity-70">
+        {/* Profit zone shading */}
+        <rect x={px(longStrike)} y={0} width={px(shortStrike) - px(longStrike)} height={60} fill="rgba(0, 212, 170, 0.06)" />
+
+        {/* Long strike — Stop loss zone */}
+        <line x1={px(longStrike)} y1="0" x2={px(longStrike)} y2="60" stroke="#ff4444" strokeWidth="1.2" strokeDasharray="4,2" />
+        <rect x={px(longStrike) - 1} y="0" width="52" height="11" rx="1.5" fill="rgba(255,68,68,0.25)" />
+        <text x={px(longStrike) + 2} y="9" fill="#ff4444" fontSize="7" fontFamily="monospace" fontWeight="bold">STOP ${longStrike}</text>
+
+        {/* Short strike — Target zone */}
+        <line x1={px(shortStrike)} y1="0" x2={px(shortStrike)} y2="60" stroke="#00d4aa" strokeWidth="1.2" strokeDasharray="4,2" />
+        <rect x={px(shortStrike) - 1} y="0" width="58" height="11" rx="1.5" fill="rgba(0,212,170,0.2)" />
+        <text x={px(shortStrike) + 2} y="9" fill="#00d4aa" fontSize="7" fontFamily="monospace" fontWeight="bold">TARGET ${shortStrike}</text>
+
+        {/* Breakeven */}
+        <line x1={px(breakeven)} y1="0" x2={px(breakeven)} y2="60" stroke="#fbbf24" strokeWidth="0.8" strokeDasharray="2,4" />
+        <text x={px(breakeven) + 2} y="22" fill="#fbbf24" fontSize="6.5" fontFamily="monospace">BE ${breakeven.toFixed(1)}</text>
       </svg>
     </div>
   );
@@ -101,11 +104,15 @@ function PositionCard({
   const pnlColor = spread.pnl >= 0 ? "text-emerald-400" : "text-red-400";
   const pnlBg = spread.pnl >= 0 ? "bg-emerald-500/10 border-emerald-500/30" : "bg-red-500/10 border-red-500/30";
 
+  const startPct = 0;
+  const stopPct = ((spread.stopLoss - spread.entryDebit) / spread.entryDebit) * 100;
+  const targetPct = ((spread.profitTarget - spread.entryDebit) / spread.entryDebit) * 100;
+
   return (
     <div className="flex flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-900/70">
-      {/* Chart area with strike zone overlay */}
+      {/* Chart area with overlay */}
       <div className="relative min-h-[300px]">
-        <StrikeZoneOverlay spread={spread} />
+        <ChartOverlay spread={spread} />
         <iframe
           src={embedUrl}
           title={`${spread.underlying} chart`}
@@ -147,8 +154,27 @@ function PositionCard({
           </div>
         </div>
 
-        {/* Stats grid */}
-        <div className="grid grid-cols-5 gap-3 text-xs">
+        {/* Stats grid: Start / Stop / Target with market rate */}
+        <div className="grid grid-cols-3 gap-3 text-xs">
+          <div className="rounded-lg border border-slate-700/50 bg-slate-800/40 px-2.5 py-2">
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Start</div>
+            <div className="font-mono text-sm font-bold text-white">{fmtMoney(spread.entryDebit)}</div>
+            <div className="mt-0.5 font-mono text-[10px] text-slate-500">mkt {fmtMoney(spread.currentValue)}</div>
+          </div>
+          <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-2.5 py-2">
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-red-400/70">Stop Loss</div>
+            <div className="font-mono text-sm font-bold text-red-400">{fmtMoney(spread.stopLoss)}</div>
+            <div className="mt-0.5 font-mono text-[10px] text-red-400/60">{stopPct.toFixed(0)}% from start</div>
+          </div>
+          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-2">
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-400/70">Target</div>
+            <div className="font-mono text-sm font-bold text-emerald-400">{fmtMoney(spread.profitTarget)}</div>
+            <div className="mt-0.5 font-mono text-[10px] text-emerald-400/60">{targetPct > 0 ? "+" : ""}{targetPct.toFixed(0)}% from start</div>
+          </div>
+        </div>
+
+        {/* Quick stats row */}
+        <div className="mt-2 grid grid-cols-4 gap-3 text-xs">
           <div>
             <div className="text-slate-500">Qty</div>
             <div className="font-mono text-slate-200">{spread.qty}x</div>
@@ -158,43 +184,33 @@ function PositionCard({
             <div className={`font-mono ${spread.dte <= 7 ? "text-red-400" : "text-slate-200"}`}>{spread.dte}</div>
           </div>
           <div>
-            <div className="text-slate-500">Start</div>
-            <div className="font-mono text-slate-200">{fmtMoney(spread.entryDebit)}</div>
+            <div className="text-slate-500">Debit</div>
+            <div className="font-mono text-slate-200">{fmtMoney(spread.entryDebit * 100 * spread.qty)}</div>
           </div>
           <div>
-            <div className="text-red-400/70">Stop Loss</div>
-            <div className="font-mono text-red-400">{fmtMoney(spread.stopLoss)}</div>
-          </div>
-          <div>
-            <div className="text-emerald-400/70">Target</div>
-            <div className="font-mono text-emerald-400">{fmtMoney(spread.profitTarget)}</div>
+            <div className="text-slate-500">Width</div>
+            <div className="font-mono text-slate-200">{fmtMoney(spread.shortStrike - spread.longStrike)}</div>
           </div>
         </div>
 
         {/* P&L bar */}
         <div className={`mt-2 flex items-center justify-between rounded-lg border px-3 py-1.5 ${pnlBg}`}>
-          <div className="flex items-center gap-3">
-            <span className="text-[11px] text-slate-400">Value</span>
-            <span className="font-mono text-xs text-slate-300">{fmtMoney(spread.currentValue)}</span>
-          </div>
+          <span className="text-[11px] text-slate-400">P&L</span>
           <span className={`font-mono text-sm font-bold ${pnlColor}`}>
             {fmtMoney(spread.pnl)} <span className="text-xs font-normal">({fmtPct(spread.pnlPct)})</span>
           </span>
         </div>
 
-        {/* Strike zone legend */}
-        <div className="mt-2 flex items-center gap-4 text-[10px] text-slate-500">
+        {/* Chart legend */}
+        <div className="mt-2 flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
           <span className="flex items-center gap-1">
-            <span className="inline-block h-px w-3" style={{ background: "#00d4aa" }} /> Long
+            <span className="inline-block h-px w-3" style={{ background: "#ff4444" }} /> Stop (long strike)
           </span>
           <span className="flex items-center gap-1">
-            <span className="inline-block h-px w-3" style={{ background: "#ff6b6b" }} /> Short
+            <span className="inline-block h-px w-3" style={{ background: "#00d4aa" }} /> Target (short strike)
           </span>
           <span className="flex items-center gap-1">
             <span className="inline-block h-px w-3" style={{ background: "#fbbf24" }} /> Breakeven
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block h-2 w-3 rounded-sm" style={{ background: "rgba(0,212,170,0.2)" }} /> Profit zone
           </span>
         </div>
       </div>
