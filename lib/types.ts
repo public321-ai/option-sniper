@@ -181,6 +181,8 @@ export interface SpreadPosition {
   pnlPct: number;
   longStrike: number;
   shortStrike: number;
+  stopLoss: number; // per-share value that triggers max-loss exit
+  profitTarget: number; // per-share value that triggers profit-taking exit
   exitSignal: string | null; // reason if agent wants to exit
 }
 

@@ -122,6 +122,9 @@ function PositionCard({
         {/* Header row */}
         <div className="mb-2 flex items-center justify-between">
           <div className="flex items-center gap-2">
+            <span className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${spread.entryDebit > 0 ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"}`}>
+              {spread.entryDebit > 0 ? "BUY" : "SELL"}
+            </span>
             <span className="text-sm font-bold text-white">{spread.underlying}</span>
             <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[11px] text-slate-400">
               {spread.longStrike}/{spread.shortStrike}C
@@ -145,7 +148,7 @@ function PositionCard({
         </div>
 
         {/* Stats grid */}
-        <div className="grid grid-cols-4 gap-3 text-xs">
+        <div className="grid grid-cols-5 gap-3 text-xs">
           <div>
             <div className="text-slate-500">Qty</div>
             <div className="font-mono text-slate-200">{spread.qty}x</div>
@@ -155,18 +158,25 @@ function PositionCard({
             <div className={`font-mono ${spread.dte <= 7 ? "text-red-400" : "text-slate-200"}`}>{spread.dte}</div>
           </div>
           <div>
-            <div className="text-slate-500">Entry</div>
+            <div className="text-slate-500">Start</div>
             <div className="font-mono text-slate-200">{fmtMoney(spread.entryDebit)}</div>
           </div>
           <div>
-            <div className="text-slate-500">Value</div>
-            <div className="font-mono text-slate-200">{fmtMoney(spread.currentValue)}</div>
+            <div className="text-red-400/70">Stop Loss</div>
+            <div className="font-mono text-red-400">{fmtMoney(spread.stopLoss)}</div>
+          </div>
+          <div>
+            <div className="text-emerald-400/70">Target</div>
+            <div className="font-mono text-emerald-400">{fmtMoney(spread.profitTarget)}</div>
           </div>
         </div>
 
         {/* P&L bar */}
         <div className={`mt-2 flex items-center justify-between rounded-lg border px-3 py-1.5 ${pnlBg}`}>
-          <span className="text-[11px] text-slate-400">P&L</span>
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] text-slate-400">Value</span>
+            <span className="font-mono text-xs text-slate-300">{fmtMoney(spread.currentValue)}</span>
+          </div>
           <span className={`font-mono text-sm font-bold ${pnlColor}`}>
             {fmtMoney(spread.pnl)} <span className="text-xs font-normal">({fmtPct(spread.pnlPct)})</span>
           </span>

@@ -131,6 +131,9 @@ export async function buildSpreadPositions(rawPositions: AlpacaPosition[]): Prom
       exitSignal = `TIME EXIT: ${dte} DTE (<= ${TIME_EXIT_DTE})`;
     else if (trend === "bearish") exitSignal = `TREND REVERSAL: ${g.underlying} turned bearish`;
 
+    const entryPerSpread = Math.round((netEntry / spreadsQty) * 1000) / 1000;
+    const valuePerSpread = Math.round((netValue / spreadsQty) * 1000) / 1000;
+
     spreads.push({
       id: key,
       underlying: g.underlying,
@@ -138,12 +141,14 @@ export async function buildSpreadPositions(rawPositions: AlpacaPosition[]): Prom
       dte,
       qty: spreadsQty,
       legs: g.legs,
-      entryDebit: Math.round((netEntry / spreadsQty) * 1000) / 1000,
-      currentValue: Math.round((netValue / spreadsQty) * 1000) / 1000,
+      entryDebit: entryPerSpread,
+      currentValue: valuePerSpread,
       pnl: Math.round(pnl * 100) / 100,
       pnlPct: Math.round(pnlPct * 1000) / 1000,
       longStrike: longLegs[0]?.strike ?? 0,
       shortStrike: shortLegs[0]?.strike ?? 0,
+      stopLoss: Math.round(entryPerSpread * (1 - MAX_LOSS_PCT) * 1000) / 1000,
+      profitTarget: Math.round(entryPerSpread * (1 + PROFIT_TARGET_PCT) * 1000) / 1000,
       exitSignal,
     });
   }
