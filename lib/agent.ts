@@ -51,7 +51,7 @@ const MIN_SCORE = Number(process.env.AGENT_MIN_SCORE || 75);
 const MAX_RISK_PCT = Number(process.env.AGENT_MAX_RISK_PCT || 1.0); // % of equity per trade
 const ENTRY_SLIPPAGE = 0.05; // per-share cushion above quoted debit to improve fills
 // Auto-exit thresholds (tighter than 50% to lock in small gains / cut small losses)
-const PROFIT_TARGET_PCT = Number(process.env.AGENT_PROFIT_PCT || 0.05); // take profit at +5%
+const PROFIT_TARGET_PCT = Number(process.env.AGENT_PROFIT_PCT || 0.10); // take profit at +10%
 const MAX_LOSS_PCT = Number(process.env.AGENT_MAX_LOSS_PCT || 0.25); // cut loss at -25%
 const TIME_EXIT_DTE = Number(process.env.AGENT_TIME_EXIT_DTE || 7); // time exit at <= N DTE
 const MAX_POSITIONS_PER_UNDERLYING = Number(process.env.AGENT_MAX_POS_PER_UNDERLYING || 3); // max concurrent spreads per underlying
