@@ -546,27 +546,38 @@ export interface AlpacaFillActivity {
   side: string; // "buy" | "sell"
   qty: string;
   price: string;
-  net_amount: string; // signed: negative for buys, positive for sells
-  per_share_amount?: string;
+  order_id?: string;
+  type?: string; // "fill" | "partial_fill"
 }
 
 /**
  * Fetch recent FILL activities from Alpaca (trade execution history).
  * Used to reconstruct closed position P&L for bull call spreads.
+ * Paginates up to 3 pages (300 fills) to cover recent trade history.
  */
 export async function getFillActivities(afterDate?: string): Promise<AlpacaFillActivity[]> {
-  const params = new URLSearchParams({
-    activity_types: "FILL",
-    direction: "desc",
-    page_size: "50",
-  });
-  if (afterDate) params.set("after", afterDate);
-  return request<AlpacaFillActivity[]>(
-    tradingBase(),
-    `/v2/account/activities?${params}`,
-    {},
-    { op: "GET /v2/activities", category: "trading" }
-  );
+  const all: AlpacaFillActivity[] = [];
+  let after = afterDate ?? "";
+  for (let page = 0; page < 3; page++) {
+    const params = new URLSearchParams({
+      activity_types: "FILL",
+      direction: "desc",
+      page_size: "100",
+    });
+    if (after) params.set("after", after);
+    const batch = await request<AlpacaFillActivity[]>(
+      tradingBase(),
+      `/v2/account/activities?${params}`,
+      {},
+      { op: "GET /v2/activities", category: "trading" }
+    );
+    if (!batch || batch.length === 0) break;
+    all.push(...batch);
+    if (batch.length < 100) break;
+    // Alpaca activities pagination: use the last activity's ID as the "after" cursor
+    after = batch[batch.length - 1].id;
+  }
+  return all;
 }
 
 export async function getLatestQuotes(symbols: string[]): Promise<Map<string, MultiQuoteEntry>> {

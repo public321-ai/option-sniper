@@ -297,56 +297,63 @@ export async function buildClosedTrades(): Promise<ClosedTrade[]> {
     groups.get(key)!.push(f);
   }
 
+  // Compute signed cash impact for a fill (Alpaca FILL activities lack net_amount)
+  const fillCash = (f: AlpacaFillActivity): number => {
+    const qty = Number(f.qty) || 0;
+    const price = Number(f.price) || 0;
+    // Options: 100 shares per contract; buys are cash out (-), sells are cash in (+)
+    return f.side === "buy" ? -(qty * price * 100) : qty * price * 100;
+  };
+
   const trades: ClosedTrade[] = [];
   for (const [key, legs] of groups) {
-    // Need at least 4 fills for a complete spread: 2 entry + 2 exit
-    if (legs.length < 4) continue;
+    // Need at least 2 fills (entry + exit) for a complete round-trip
+    if (legs.length < 2) continue;
 
     // Sort by time ascending
     legs.sort((a, b) => new Date(a.transaction_time).getTime() - new Date(b.transaction_time).getTime());
 
-    // Separate entry (buy-side net debit) and exit (sell-side net credit)
-    // For a bull call spread entry: BUY long (buy) + SELL short (sell) = net debit
-    // For exit: SELL long (sell) + BUY short (buy) = net credit
-    const entryFills: AlpacaFillActivity[] = [];
-    const exitFills: AlpacaFillActivity[] = [];
-
-    // First pair of fills (one buy, one sell) = entry; second pair = exit
-    let buyCount = 0;
-    let sellCount = 0;
-    let entryComplete = false;
-    for (const f of legs) {
-      if (!entryComplete) {
-        entryFills.push(f);
-        if (f.side === "buy") buyCount++;
-        if (f.side === "sell") sellCount++;
-        if (buyCount >= 1 && sellCount >= 1) entryComplete = true;
-      } else {
-        exitFills.push(f);
+    // Split fills into entry vs exit by tracking cumulative position per symbol.
+    // When all symbols return to net-zero qty, the entry is complete.
+    const symbolQty = new Map<string, number>();
+    let splitIdx = legs.length; // default: no exit found
+    for (let i = 0; i < legs.length; i++) {
+      const f = legs[i];
+      const prev = symbolQty.get(f.symbol) ?? 0;
+      const signed = f.side === "buy" ? Number(f.qty) : -Number(f.qty);
+      symbolQty.set(f.symbol, prev + signed);
+      // Check if ALL symbols have returned to zero (position fully closed)
+      if (i >= 1 && [...symbolQty.values()].every((v) => v === 0)) {
+        splitIdx = i + 1;
+        break;
       }
     }
 
-    if (entryFills.length < 2 || exitFills.length < 2) continue;
+    const entryFills = legs.slice(0, splitIdx);
+    const exitFills = legs.slice(splitIdx);
 
-    const entryNet = entryFills.reduce((sum, f) => sum + Number(f.net_amount), 0);
-    const exitNet = exitFills.reduce((sum, f) => sum + Number(f.net_amount), 0);
+    // Must have both entry and exit fills
+    if (exitFills.length === 0) continue;
 
-    // For a debit spread, entryNet is negative (paid), exitNet is positive (received)
-    const realizedPnl = exitNet + entryNet; // both signed correctly already
-    const entryDebit = Math.abs(entryNet) / 100; // per-share debit (net_amount is total, /100 for contract multiplier)
+    const entryNet = entryFills.reduce((sum, f) => sum + fillCash(f), 0);
+    const exitNet = exitFills.reduce((sum, f) => sum + fillCash(f), 0);
+
+    // For a debit spread: entryNet < 0 (paid), exitNet > 0 (received)
+    const realizedPnl = exitNet + entryNet;
+    const entryDebit = Math.abs(entryNet) / 100; // per-share debit
     const exitCredit = exitNet / 100; // per-share credit
 
-    if (entryDebit === 0) continue;
+    if (entryDebit === 0 || isNaN(entryDebit)) continue;
 
     const parts = key.split("|");
     const underlying = parts[0];
     const expiry = parts[1];
 
-    // Extract strikes from the fills
+    // Extract strikes from entry fills
     const parsedLegs = entryFills.map((f) => parseOccSymbol(f.symbol)).filter(Boolean);
-    const longStrike = parsedLegs.find((p) => p!.strike < Math.max(...parsedLegs.map((l) => l!.strike)))?.strike
-      ?? Math.min(...parsedLegs.map((p) => p!.strike));
-    const shortStrike = Math.max(...parsedLegs.map((p) => p!.strike));
+    const strikes = parsedLegs.map((p) => p!.strike);
+    const longStrike = Math.min(...strikes);
+    const shortStrike = Math.max(...strikes);
 
     const qty = Math.round(Math.abs(Number(entryFills.find((f) => f.side === "buy")?.qty ?? 1)));
 
@@ -368,7 +375,7 @@ export async function buildClosedTrades(): Promise<ClosedTrade[]> {
         side: f.side,
         qty: Number(f.qty),
         price: Number(f.price),
-        netAmount: Number(f.net_amount),
+        netAmount: fillCash(f),
       })),
     });
   }
