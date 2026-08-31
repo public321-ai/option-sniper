@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useMemo } from "react";
 import type { SpreadPosition } from "@/lib/types";
 import { fmtMoney, fmtPct } from "./ui";
 
@@ -25,6 +25,33 @@ function tvSymbol(underlying: string) {
   return `${ex}:${underlying}`;
 }
 
+/** Build TradingView embed URL for a given symbol */
+function tvEmbedUrl(underlying: string) {
+  const symbol = encodeURIComponent(tvSymbol(underlying));
+  const params = new URLSearchParams({
+    frameElementId: `tv_${underlying}`,
+    symbol,
+    interval: "15",
+    theme: "dark",
+    style: "1",
+    locale: "en",
+    toolbar_bg: "#0a0a0f",
+    enable_publishing: "false",
+    hide_top_toolbar: "0",
+    hide_legend: "0",
+    hide_side_toolbar: "1",
+    withdateranges: "1",
+    show_popup_button: "1",
+    popup_width: "1000",
+    popup_height: "650",
+    allow_symbol_change: "false",
+    save_image: "false",
+    backgroundColor: "rgba(10, 10, 15, 1)",
+    gridColor: "rgba(30, 30, 40, 0.5)",
+  });
+  return `https://s.tradingview.com/widgetembed/?${params}`;
+}
+
 /** Strike zone overlay — horizontal lines at long/short strikes with shaded profit zone */
 function StrikeZoneOverlay({ spread }: { spread: SpreadPosition }) {
   const longStrike = spread.longStrike;
@@ -33,30 +60,23 @@ function StrikeZoneOverlay({ spread }: { spread: SpreadPosition }) {
   const range = shortStrike - longStrike || 1;
   const padding = range * 0.5;
 
-  // SVG coordinate system: x=0..300 maps to price longStrike-padding .. shortStrike+padding
   const priceMin = longStrike - padding;
   const priceMax = shortStrike + padding;
-  const priceToY = (p: number) => ((priceMax - p) / (priceMax - priceMin)) * 60;
   const priceToX = (p: number) => ((p - priceMin) / (priceMax - priceMin)) * 300;
 
   return (
     <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-center pt-1">
       <svg width="100%" height="62" viewBox="0 0 300 60" preserveAspectRatio="none" className="opacity-60">
-        {/* Profit zone shading between long strike and short strike */}
         <rect
           x={priceToX(longStrike)}
-          y={priceToY(shortStrike)}
+          y={0}
           width={priceToX(shortStrike) - priceToX(longStrike)}
-          height={priceToY(longStrike) - priceToY(shortStrike)}
+          height={60}
           fill="rgba(0, 212, 170, 0.06)"
         />
-        {/* Long strike line */}
         <line x1={priceToX(longStrike)} y1="0" x2={priceToX(longStrike)} y2="60" stroke="#00d4aa" strokeWidth="1" strokeDasharray="3,3" />
-        {/* Short strike line */}
         <line x1={priceToX(shortStrike)} y1="0" x2={priceToX(shortStrike)} y2="60" stroke="#ff6b6b" strokeWidth="1" strokeDasharray="3,3" />
-        {/* Breakeven line */}
         <line x1={priceToX(breakeven)} y1="0" x2={priceToX(breakeven)} y2="60" stroke="#fbbf24" strokeWidth="1" strokeDasharray="2,4" />
-        {/* Strike labels */}
         <text x={priceToX(longStrike) + 3} y="10" fill="#00d4aa" fontSize="7" fontFamily="monospace">L ${longStrike}</text>
         <text x={priceToX(shortStrike) + 3} y="10" fill="#ff6b6b" fontSize="7" fontFamily="monospace">S ${shortStrike}</text>
         <text x={priceToX(breakeven) + 3} y="20" fill="#fbbf24" fontSize="7" fontFamily="monospace">BE ${breakeven.toFixed(1)}</text>
@@ -75,70 +95,8 @@ function PositionCard({
   onClose: (id: string) => void;
   closing: string | null;
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const widgetLoaded = useRef(false);
   const isClosing = closing === spread.id;
-
-  const loadWidget = useCallback(() => {
-    if (!containerRef.current || widgetLoaded.current) return;
-    widgetLoaded.current = true;
-
-    const container = containerRef.current;
-    container.innerHTML = "";
-
-    const widgetDiv = document.createElement("div");
-    widgetDiv.style.height = "280px";
-    widgetDiv.style.width = "100%";
-    container.appendChild(widgetDiv);
-
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const TV = (window as any).TradingView;
-      if (TV && TV.widget) {
-        new TV.widget({
-          symbol: tvSymbol(spread.underlying),
-          interval: "15",
-          autosize: true,
-          timezone: "Etc/UTC",
-          theme: "dark",
-          style: "1",
-          locale: "en",
-          toolbar_bg: "#0a0a0f",
-          enable_publishing: false,
-          hide_top_toolbar: false,
-          hide_legend: false,
-          hide_side_toolbar: true,
-          allow_symbol_change: false,
-          background_color: "#0a0a0f",
-          gridColor: "rgba(30,30,40,0.5)",
-          container_id: widgetDiv,
-          studies: ["MASimple@tv-basicstudies"],
-          show_popup_button: true,
-          popup_width: "1000",
-          popup_height: "650",
-        });
-      }
-    } catch {
-      widgetDiv.innerHTML = `<div class="flex h-full items-center justify-center text-xs text-slate-500">Chart unavailable — TradingView script not loaded</div>`;
-    }
-  }, [spread.underlying]);
-
-  useEffect(() => {
-    // Load TradingView library if not already present
-    if (typeof window !== "undefined" && !(window as any).TradingView) {
-      const script = document.createElement("script");
-      script.src = "https://s3.tradingview.com/tv.js";
-      script.async = true;
-      script.onload = () => loadWidget();
-      document.head.appendChild(script);
-    } else {
-      loadWidget();
-    }
-
-    return () => {
-      widgetLoaded.current = false;
-    };
-  }, [loadWidget]);
+  const embedUrl = useMemo(() => tvEmbedUrl(spread.underlying), [spread.underlying]);
 
   const pnlColor = spread.pnl >= 0 ? "text-emerald-400" : "text-red-400";
   const pnlBg = spread.pnl >= 0 ? "bg-emerald-500/10 border-emerald-500/30" : "bg-red-500/10 border-red-500/30";
@@ -146,9 +104,17 @@ function PositionCard({
   return (
     <div className="flex flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-900/70">
       {/* Chart area with strike zone overlay */}
-      <div className="relative min-h-[280px]">
+      <div className="relative min-h-[300px]">
         <StrikeZoneOverlay spread={spread} />
-        <div ref={containerRef} className="h-full w-full min-h-[280px]" />
+        <iframe
+          src={embedUrl}
+          title={`${spread.underlying} chart`}
+          className="h-full w-full border-0"
+          style={{ minHeight: 300 }}
+          loading="lazy"
+          allow="clipboard-write"
+          sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        />
       </div>
 
       {/* Position details */}
