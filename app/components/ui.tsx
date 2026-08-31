@@ -11,12 +11,12 @@ export function DecisionBadge({ decision }: { decision: Decision | null }) {
   if (!decision) return null;
   const styles =
     decision.action === "ENTER"
-      ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/40"
+      ? "bg-emerald-dim text-emerald-soft border-bdr-accent"
       : decision.action === "EXIT"
-        ? "bg-red-500/15 text-red-400 border-red-500/40"
-        : "bg-amber-500/15 text-amber-400 border-amber-500/40";
+        ? "bg-coral-dim text-coral border-bdr-accent"
+        : "bg-[rgba(210,153,34,0.1)] text-amber-soft border-bdr-accent";
   return (
-    <span className={`inline-flex items-center rounded-md border px-2.5 py-1 text-sm font-bold tracking-wide ${styles}`}>
+    <span className={`inline-flex items-center rounded-[var(--radius-badge)] border px-2.5 py-1 text-xs font-bold tracking-wide ${styles}`}>
       {decision.action}
     </span>
   );
@@ -25,46 +25,46 @@ export function DecisionBadge({ decision }: { decision: Decision | null }) {
 export function TrendBadge({ trend }: { trend: string }) {
   const styles =
     trend === "bullish"
-      ? "bg-emerald-500/15 text-emerald-400"
+      ? "bg-emerald-dim text-emerald-soft"
       : trend === "bearish"
-        ? "bg-red-500/15 text-red-400"
-        : "bg-slate-500/15 text-slate-400";
+        ? "bg-coral-dim text-coral"
+        : "bg-charcoal text-txt-muted";
   return (
-    <span className={`rounded px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${styles}`}>
+    <span className={`rounded-[var(--radius-badge)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${styles}`}>
       {trend}
     </span>
   );
 }
 
 export function ScoreBar({ score }: { score: number }) {
-  const color = score >= 75 ? "bg-emerald-500" : score >= 50 ? "bg-amber-500" : "bg-slate-500";
+  const color = score >= 75 ? "bg-emerald-soft" : score >= 50 ? "bg-amber-soft" : "bg-txt-dim";
   return (
     <div className="flex items-center gap-2">
-      <div className="h-1.5 w-16 overflow-hidden rounded bg-slate-700">
-        <div className={`h-full ${color}`} style={{ width: `${score}%` }} />
+      <div className="h-1 w-16 overflow-hidden rounded-full bg-raised">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${score}%` }} />
       </div>
-      <span className="font-mono text-xs text-slate-300">{score.toFixed(1)}</span>
+      <span className="font-mono text-xs text-txt-secondary">{score.toFixed(1)}</span>
     </div>
   );
 }
 
 const LOG_COLORS: Record<AgentLogEntry["level"], string> = {
-  info: "text-slate-300",
-  success: "text-emerald-400",
-  warn: "text-amber-400",
-  error: "text-red-400",
-  trade: "text-sky-400",
+  info: "text-txt-secondary",
+  success: "text-emerald-soft",
+  warn: "text-amber-soft",
+  error: "text-coral",
+  trade: "text-cyan-soft",
 };
 
 export function LogPanel({ log }: { log: AgentLogEntry[] }) {
   return (
-    <div className="log-scroll h-72 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950/60 p-3 font-mono text-xs">
+    <div className="log-scroll h-72 overflow-y-auto rounded-[var(--radius-card)] border border-bdr bg-graphite p-3 font-mono text-xs">
       {log.length === 0 ? (
-        <p className="text-slate-500">No agent activity yet — press SCAN NOW or START AGENT.</p>
+        <p className="text-txt-muted">No agent activity yet — press SCAN NOW or START AGENT.</p>
       ) : (
         log.map((e, i) => (
           <div key={i} className="flex gap-2 py-0.5">
-            <span className="shrink-0 text-slate-500">
+            <span className="shrink-0 text-txt-dim">
               {new Date(e.ts).toLocaleTimeString("en-US", { hour12: false })}
             </span>
             <span className={LOG_COLORS[e.level]}>{e.message}</span>
@@ -85,49 +85,49 @@ export function PositionsTable({
   closing: string | null;
 }) {
   if (positions.length === 0) {
-    return <p className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-500">No open positions. Alpaca is the source of truth.</p>;
+    return <p className="soft-card p-4 text-sm text-txt-muted">No open positions. Alpaca is the source of truth.</p>;
   }
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-800">
-      <table className="w-full text-left text-sm">
-        <thead className="bg-slate-900/80 text-xs uppercase tracking-wider text-slate-400">
+    <div className="overflow-x-auto rounded-[var(--radius-card)] border border-bdr">
+      <table className="soft-table">
+        <thead>
           <tr>
-            <th className="px-3 py-2">Spread</th>
-            <th className="px-3 py-2">Qty</th>
-            <th className="px-3 py-2">DTE</th>
-            <th className="px-3 py-2">Entry Debit</th>
-            <th className="px-3 py-2">Value</th>
-            <th className="px-3 py-2">P&amp;L</th>
-            <th className="px-3 py-2">Exit Signal</th>
-            <th className="px-3 py-2"></th>
+            <th>Spread</th>
+            <th>Qty</th>
+            <th>DTE</th>
+            <th>Entry Debit</th>
+            <th>Value</th>
+            <th>P&amp;L</th>
+            <th>Exit Signal</th>
+            <th></th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-800 bg-slate-950/60">
+        <tbody>
           {positions.map((s) => (
             <tr key={s.id}>
-              <td className="px-3 py-2 font-medium">
+              <td className="font-medium text-txt">
                 {s.underlying} {s.longStrike}/{s.shortStrike}C
-                <span className="ml-1 text-xs text-slate-500">{s.expiry}</span>
+                <span className="ml-1 text-xs text-txt-muted">{s.expiry}</span>
               </td>
-              <td className="px-3 py-2 font-mono">{s.qty}</td>
-              <td className="px-3 py-2 font-mono">{s.dte}</td>
-              <td className="px-3 py-2 font-mono">{fmtMoney(s.entryDebit)}</td>
-              <td className="px-3 py-2 font-mono">{fmtMoney(s.currentValue)}</td>
-              <td className={`px-3 py-2 font-mono font-semibold ${s.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+              <td className="font-mono">{s.qty}</td>
+              <td className="font-mono">{s.dte}</td>
+              <td className="font-mono">{fmtMoney(s.entryDebit)}</td>
+              <td className="font-mono">{fmtMoney(s.currentValue)}</td>
+              <td className={`font-mono font-semibold ${s.pnl >= 0 ? "pnl-positive" : "pnl-negative"}`}>
                 {fmtMoney(s.pnl)} ({fmtPct(s.pnlPct)})
               </td>
-              <td className="px-3 py-2">
+              <td>
                 {s.exitSignal ? (
-                  <span className="rounded bg-red-500/15 px-2 py-0.5 text-xs font-semibold text-red-400">{s.exitSignal}</span>
+                  <span className="rounded-[var(--radius-badge)] bg-coral-dim px-2 py-0.5 text-[11px] font-semibold text-coral">{s.exitSignal}</span>
                 ) : (
-                  <span className="text-xs text-slate-500">—</span>
+                  <span className="text-xs text-txt-dim">—</span>
                 )}
               </td>
-              <td className="px-3 py-2 text-right">
+              <td className="text-right">
                 <button
                   onClick={() => onClose(s.id)}
                   disabled={closing === s.id}
-                  className="rounded border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-xs font-semibold text-red-400 hover:bg-red-500/20 disabled:opacity-50"
+                  className="btn-danger px-2.5 py-1 text-[11px]"
                 >
                   {closing === s.id ? "CLOSING…" : "CLOSE"}
                 </button>

@@ -74,7 +74,10 @@ export async function getAccountView(): Promise<AccountView> {
   };
 }
 
-/** Build normalized spread views from raw Alpaca option positions. */
+/** Build one position view per raw Alpaca option leg so every position
+ *  the user sees in Alpaca is represented in the dashboard. Paired long+short
+ *  legs share a `groupId` and the same spread-level exit signal so the agent
+ *  can still close them together (short first). */
 export async function buildSpreadPositions(rawPositions: AlpacaPosition[]): Promise<SpreadPosition[]> {
   const optionPositions = rawPositions.filter((p) => p.asset_class === "us_option");
   interface Group {
@@ -113,47 +116,155 @@ export async function buildSpreadPositions(rawPositions: AlpacaPosition[]): Prom
 
   const spreads: SpreadPosition[] = [];
   for (const [key, g] of groups) {
-    const longLegs = g.legs.filter((l) => l.side === "long");
-    const shortLegs = g.legs.filter((l) => l.side === "short");
-    const netEntry = g.legs.reduce((acc, l) => acc + l.avgEntryPrice * l.qty, 0);
-    const netValue = g.legs.reduce((acc, l) => acc + l.currentPrice * l.qty, 0);
-    const spreadsQty = longLegs.reduce((acc, l) => acc + Math.abs(l.qty), 0) || 1;
-    const pnlPct = netEntry !== 0 ? (netValue - netEntry) / netEntry : 0;
-    // netEntry/netValue are totals across all spreads; report per-spread values
-    const pnl = (netValue - netEntry) * 100;
+    const longLegs = g.legs.filter((l) => l.side === "long").sort((a, b) => a.strike - b.strike);
+    const shortLegs = g.legs.filter((l) => l.side === "short").sort((a, b) => a.strike - b.strike);
     const dte = daysToExpiry(g.expiry);
     const trend = trendCache.get(g.underlying) ?? "neutral";
 
-    // Exit rules: profit target, max loss, trend reversal, time exit
-    let exitSignal: string | null = null;
-    if (pnlPct >= PROFIT_TARGET_PCT)
-      exitSignal = `TARGET HIT: +${Math.round(pnlPct * 100)}% profit (target ${(PROFIT_TARGET_PCT * 100).toFixed(0)}%)`;
-    else if (pnlPct <= -MAX_LOSS_PCT)
-      exitSignal = `MAX LOSS: ${Math.round(pnlPct * 100)}% of debit (limit ${(MAX_LOSS_PCT * 100).toFixed(0)}%)`;
-    else if (dte <= TIME_EXIT_DTE)
-      exitSignal = `TIME EXIT: ${dte} DTE (<= ${TIME_EXIT_DTE})`;
-    else if (trend === "bearish") exitSignal = `TREND REVERSAL: ${g.underlying} turned bearish`;
+    const pairCount = Math.min(longLegs.length, shortLegs.length);
 
-    const entryPerSpread = Math.round((netEntry / spreadsQty) * 1000) / 1000;
-    const valuePerSpread = Math.round((netValue / spreadsQty) * 1000) / 1000;
+    // Pre-compute spread-level exit signals for paired legs
+    const pairExitSignals = new Map<number, string | null>();
+    for (let i = 0; i < pairCount; i++) {
+      const ll = longLegs[i];
+      const sl = shortLegs[i];
+      const netEntry = ll.avgEntryPrice * ll.qty + sl.avgEntryPrice * sl.qty;
+      const netValue = ll.currentPrice * ll.qty + sl.currentPrice * sl.qty;
+      const pnlPct = netEntry !== 0 ? (netValue - netEntry) / netEntry : 0;
 
-    spreads.push({
-      id: key,
-      underlying: g.underlying,
-      expiry: g.expiry,
-      dte,
-      qty: spreadsQty,
-      legs: g.legs,
-      entryDebit: entryPerSpread,
-      currentValue: valuePerSpread,
-      pnl: Math.round(pnl * 100) / 100,
-      pnlPct: Math.round(pnlPct * 1000) / 1000,
-      longStrike: longLegs[0]?.strike ?? 0,
-      shortStrike: shortLegs[0]?.strike ?? 0,
-      stopLoss: Math.round(entryPerSpread * (1 - MAX_LOSS_PCT) * 1000) / 1000,
-      profitTarget: Math.round(entryPerSpread * (1 + PROFIT_TARGET_PCT) * 1000) / 1000,
-      exitSignal,
-    });
+      let exitSignal: string | null = null;
+      if (pnlPct >= PROFIT_TARGET_PCT)
+        exitSignal = `TARGET HIT: +${Math.round(pnlPct * 100)}% profit (target ${(PROFIT_TARGET_PCT * 100).toFixed(0)}%)`;
+      else if (pnlPct <= -MAX_LOSS_PCT)
+        exitSignal = `MAX LOSS: ${Math.round(pnlPct * 100)}% of debit (limit ${(MAX_LOSS_PCT * 100).toFixed(0)}%)`;
+      else if (dte <= TIME_EXIT_DTE)
+        exitSignal = `TIME EXIT: ${dte} DTE (<= ${TIME_EXIT_DTE})`;
+      else if (trend === "bearish") exitSignal = `TREND REVERSAL: ${g.underlying} turned bearish`;
+
+      pairExitSignals.set(i, exitSignal);
+    }
+
+    // Emit one SpreadPosition per raw option position
+    for (let i = 0; i < pairCount; i++) {
+      const ll = longLegs[i];
+      const sl = shortLegs[i];
+      const groupId = `${key}|${ll.strike}|${sl.strike}`;
+      const exitSignal = pairExitSignals.get(i) ?? null;
+      const netEntry = ll.avgEntryPrice * ll.qty + sl.avgEntryPrice * sl.qty;
+      const netValue = ll.currentPrice * ll.qty + sl.currentPrice * sl.qty;
+      const spreadQty = Math.abs(ll.qty) || 1;
+      const entryPerSpread = Math.round((netEntry / spreadQty) * 1000) / 1000;
+      const valuePerSpread = Math.round((netValue / spreadQty) * 1000) / 1000;
+
+      // Long leg entry
+      const llPnl = (ll.currentPrice - ll.avgEntryPrice) * ll.qty * 100;
+      const llPnlPct = ll.avgEntryPrice !== 0 ? (ll.currentPrice - ll.avgEntryPrice) / ll.avgEntryPrice : 0;
+      spreads.push({
+        id: `${groupId}|long`,
+        groupId,
+        underlying: g.underlying,
+        expiry: g.expiry,
+        dte,
+        qty: Math.abs(ll.qty) || 1,
+        legs: [ll, sl],
+        entryDebit: ll.avgEntryPrice,
+        currentValue: ll.currentPrice,
+        pnl: Math.round(llPnl * 100) / 100,
+        pnlPct: Math.round(llPnlPct * 1000) / 1000,
+        longStrike: ll.strike,
+        shortStrike: sl.strike,
+        stopLoss: Math.round(entryPerSpread * (1 - MAX_LOSS_PCT) * 1000) / 1000,
+        profitTarget: Math.round(entryPerSpread * (1 + PROFIT_TARGET_PCT) * 1000) / 1000,
+        exitSignal,
+        side: "long",
+      });
+
+      // Short leg entry
+      const slPnl = (sl.currentPrice - sl.avgEntryPrice) * sl.qty * 100;
+      const slPnlPct = sl.avgEntryPrice !== 0 ? (sl.currentPrice - sl.avgEntryPrice) / sl.avgEntryPrice : 0;
+      spreads.push({
+        id: `${groupId}|short`,
+        groupId,
+        underlying: g.underlying,
+        expiry: g.expiry,
+        dte,
+        qty: Math.abs(sl.qty) || 1,
+        legs: [ll, sl],
+        entryDebit: sl.avgEntryPrice,
+        currentValue: sl.currentPrice,
+        pnl: Math.round(slPnl * 100) / 100,
+        pnlPct: Math.round(slPnlPct * 1000) / 1000,
+        longStrike: ll.strike,
+        shortStrike: sl.strike,
+        stopLoss: Math.round(entryPerSpread * (1 - MAX_LOSS_PCT) * 1000) / 1000,
+        profitTarget: Math.round(entryPerSpread * (1 + PROFIT_TARGET_PCT) * 1000) / 1000,
+        exitSignal,
+        side: "short",
+      });
+    }
+
+    // Unpaired long legs (no matching short)
+    for (let i = pairCount; i < longLegs.length; i++) {
+      const ll = longLegs[i];
+      const entryPerSpread = ll.avgEntryPrice;
+      const valuePerSpread = ll.currentPrice;
+      const pnlPct = entryPerSpread !== 0 ? (valuePerSpread - entryPerSpread) / entryPerSpread : 0;
+      let exitSignal: string | null = null;
+      if (pnlPct <= -MAX_LOSS_PCT)
+        exitSignal = `MAX LOSS: ${Math.round(pnlPct * 100)}% (limit ${(MAX_LOSS_PCT * 100).toFixed(0)}%)`;
+      else if (dte <= TIME_EXIT_DTE)
+        exitSignal = `TIME EXIT: ${dte} DTE (<= ${TIME_EXIT_DTE})`;
+      else if (trend === "bearish") exitSignal = `TREND REVERSAL: ${g.underlying} turned bearish`;
+
+      spreads.push({
+        id: `${key}|${ll.strike}|solo`,
+        underlying: g.underlying,
+        expiry: g.expiry,
+        dte,
+        qty: Math.abs(ll.qty) || 1,
+        legs: [ll],
+        entryDebit: entryPerSpread,
+        currentValue: valuePerSpread,
+        pnl: Math.round((valuePerSpread - entryPerSpread) * ll.qty * 100 * 100) / 100,
+        pnlPct: Math.round(pnlPct * 1000) / 1000,
+        longStrike: ll.strike,
+        shortStrike: 0,
+        stopLoss: Math.round(entryPerSpread * (1 - MAX_LOSS_PCT) * 1000) / 1000,
+        profitTarget: Math.round(entryPerSpread * (1 + PROFIT_TARGET_PCT) * 1000) / 1000,
+        exitSignal,
+        side: "long",
+      });
+    }
+
+    // Unpaired short legs (no matching long)
+    for (let i = pairCount; i < shortLegs.length; i++) {
+      const sl = shortLegs[i];
+      const pnlPct = sl.avgEntryPrice !== 0 ? (sl.currentPrice - sl.avgEntryPrice) / sl.avgEntryPrice : 0;
+      let exitSignal: string | null = null;
+      if (pnlPct >= PROFIT_TARGET_PCT)
+        exitSignal = `TARGET HIT: +${Math.round(pnlPct * 100)}% profit (target ${(PROFIT_TARGET_PCT * 100).toFixed(0)}%)`;
+      else if (dte <= TIME_EXIT_DTE)
+        exitSignal = `TIME EXIT: ${dte} DTE (<= ${TIME_EXIT_DTE})`;
+
+      spreads.push({
+        id: `${key}|${sl.strike}|solo-short`,
+        underlying: g.underlying,
+        expiry: g.expiry,
+        dte,
+        qty: Math.abs(sl.qty) || 1,
+        legs: [sl],
+        entryDebit: sl.avgEntryPrice,
+        currentValue: sl.currentPrice,
+        pnl: Math.round((sl.currentPrice - sl.avgEntryPrice) * sl.qty * 100 * 100) / 100,
+        pnlPct: Math.round(pnlPct * 1000) / 1000,
+        longStrike: 0,
+        shortStrike: sl.strike,
+        stopLoss: 0,
+        profitTarget: 0,
+        exitSignal,
+        side: "short",
+      });
+    }
   }
   return spreads.sort((a, b) => a.underlying.localeCompare(b.underlying));
 }
@@ -188,11 +299,14 @@ export async function evaluateAndEnter(
     return { action: "WAIT", reason: "Position size rounds to zero spreads at this risk limit", score, riskPct };
   }
   const existingOnUnderlying = existingSpreads.filter((s) => s.underlying === cand.underlying);
-  if (existingOnUnderlying.length >= MAX_POSITIONS_PER_UNDERLYING) {
-    logEntry("info", `WAIT: already have ${existingOnUnderlying.length}/${MAX_POSITIONS_PER_UNDERLYING} open ${cand.underlying} positions`, log);
-    return { action: "WAIT", reason: `${existingOnUnderlying.length} open ${cand.underlying} position(s) — limit ${MAX_POSITIONS_PER_UNDERLYING} per underlying`, score, riskPct };
+  // Count unique spreads (group by groupId to avoid double-counting paired legs)
+  const uniqueGroupIds = new Set(existingOnUnderlying.map((s) => s.groupId || s.id));
+  const uniqueCount = uniqueGroupIds.size;
+  if (uniqueCount >= MAX_POSITIONS_PER_UNDERLYING) {
+    logEntry("info", `WAIT: already have ${uniqueCount}/${MAX_POSITIONS_PER_UNDERLYING} open ${cand.underlying} positions`, log);
+    return { action: "WAIT", reason: `${uniqueCount} open ${cand.underlying} position(s) — limit ${MAX_POSITIONS_PER_UNDERLYING} per underlying`, score, riskPct };
   }
-  if (existingOnUnderlying.length > 0 && existingOnUnderlying.some((s) => s.pnlPct >= 0)) {
+  if (uniqueCount > 0 && existingOnUnderlying.some((s) => s.pnlPct >= 0)) {
     const profitable = existingOnUnderlying.filter((s) => s.pnlPct >= 0).length;
     logEntry("info", `WAIT: ${cand.underlying} has ${profitable} profitable position(s) — only add when existing is at a loss`, log);
     return { action: "WAIT", reason: `Existing ${cand.underlying} position is profitable — only add when at a loss`, score, riskPct };
@@ -420,14 +534,25 @@ export async function runAgentTick(opts: { autoEnter: boolean; autoExit: boolean
     const raw = IS_MOCK ? mockGetPositions() : await getPositions();
     positions = await buildSpreadPositions(raw);
     if (positions.length > 0 && opts.autoExit) {
+      // Deduplicate by groupId so paired legs are closed once (short first)
+      const closed = new Set<string>();
       for (const spread of positions) {
-        if (spread.exitSignal) await exitSpread(spread, spread.exitSignal, log);
+        const gid = spread.groupId || spread.id;
+        if (spread.exitSignal && !closed.has(gid)) {
+          closed.add(gid);
+          await exitSpread(spread, spread.exitSignal, log);
+        }
       }
       const rawAfter = IS_MOCK ? mockGetPositions() : await getPositions();
       positions = await buildSpreadPositions(rawAfter);
     } else if (positions.length > 0) {
+      const signaled = new Set<string>();
       for (const spread of positions) {
-        if (spread.exitSignal) logEntry("warn", `EXIT SIGNAL on ${spread.underlying} spread: ${spread.exitSignal} (auto-exit off)`, log);
+        const gid = spread.groupId || spread.id;
+        if (spread.exitSignal && !signaled.has(gid)) {
+          signaled.add(gid);
+          logEntry("warn", `EXIT SIGNAL on ${spread.underlying} ${spread.side} ${spread.longStrike}/${spread.shortStrike || "—"}C: ${spread.exitSignal} (auto-exit off)`, log);
+        }
       }
     }
   } catch (err) {

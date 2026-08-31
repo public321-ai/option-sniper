@@ -7,7 +7,8 @@ import type { AgentLogEntry } from "@/lib/types";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/** CLOSE POSITION: close all legs of a spread (body: { spreadId }). */
+/** CLOSE POSITION: close all legs of a spread (body: { spreadId }).
+ *  For paired legs (same groupId), closing one leg closes the entire spread. */
 export async function POST(req: Request) {
   const log: AgentLogEntry[] = [];
   try {
@@ -21,6 +22,8 @@ export async function POST(req: Request) {
     if (!spread) {
       return NextResponse.json({ error: `Spread ${body.spreadId} not found among open positions` }, { status: 404 });
     }
+    // For grouped (paired) spreads, use the first entry to close all legs;
+    // exitSpread already closes short legs first.
     const ok = await exitSpread(spread, "Manual close from dashboard", log);
     return NextResponse.json({ success: ok, log });
   } catch (err) {

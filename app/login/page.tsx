@@ -15,19 +15,12 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Redirect to dashboard if already authenticated.
   useEffect(() => {
-    if (!loading && authenticated) {
-      router.replace("/");
-    }
+    if (!loading && authenticated) router.replace("/");
   }, [authenticated, loading, router]);
 
-  // Auto-fill demo credentials when the toggle is flipped on.
   useEffect(() => {
-    if (fillDemo) {
-      setUsername(DEMO_USERNAME);
-      setPassword(DEMO_PASSWORD);
-    }
+    if (fillDemo) { setUsername(DEMO_USERNAME); setPassword(DEMO_PASSWORD); }
   }, [fillDemo]);
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
@@ -36,103 +29,80 @@ export default function LoginPage() {
     setSubmitting(true);
     const ok = login(username, password);
     setSubmitting(false);
-    if (ok) {
-      router.replace("/");
-    } else {
-      setError("Invalid username or password.");
-    }
+    if (ok) router.replace("/");
+    else setError("Invalid username or password.");
   };
 
-  const Toggle = ({
-    checked,
-    onChange,
-  }: {
-    checked: boolean;
-    onChange: (checked: boolean) => void;
-  }) => (
+  const Toggle = ({ checked, onChange }: { checked: boolean; onChange: (checked: boolean) => void }) => (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className="group relative inline-flex h-6 w-11 items-center rounded-full border-2 border-transparent text-white outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
+      className="group relative inline-flex h-6 w-11 items-center rounded-full border-2 border-transparent text-white outline-none transition-colors focus-visible:ring-2 focus-visible:ring-emerald-soft focus-visible:ring-offset-2 focus-visible:ring-offset-obsidian"
     >
       <span className="sr-only">Toggle demo credentials</span>
-      <span
-        className={
-          "absolute inset-0 rounded-full transition-colors " +
-          (checked ? "bg-blue-600" : "bg-slate-700")
-        }
-      />
-      <span
-        className={
-          "absolute top-0.5 left-0.5 h-5 w-5 transform rounded-full bg-white shadow transition-transform " +
-          (checked ? "translate-x-5" : "translate-x-0")
-        }
-      />
-                  <span className="absolute inset-0 flex items-center justify-between px-1.5 text-[10px] font-medium">
-        <span className={checked ? "text-blue-200" : "text-slate-400"}>OFF</span>
-        <span className={checked ? "text-white" : "text-slate-400"}>ON</span>
+      <span className={`absolute inset-0 rounded-full transition-colors ${checked ? "bg-emerald-muted" : "bg-raised"}`} />
+      <span className={`absolute top-0.5 left-0.5 h-5 w-5 transform rounded-full bg-txt shadow transition-transform ${checked ? "translate-x-5" : "translate-x-0"}`} />
+      <span className="absolute inset-0 flex items-center justify-between px-1.5 text-[10px] font-medium">
+        <span className={checked ? "text-emerald-soft" : "text-txt-dim"}>OFF</span>
+        <span className={checked ? "text-white" : "text-txt-dim"}>ON</span>
       </span>
     </button>
   );
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center bg-slate-950">
-      <div className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-800/40 via-slate-950 to-slate-950" />
-      <div className="w-full max-w-md space-y-8 rounded-2xl border border-slate-800 bg-slate-900/70 p-8 shadow-xl shadow-black/40">
+    <div className="relative flex min-h-screen items-center justify-center bg-obsidian">
+      <div className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-charcoal/30 via-obsidian to-obsidian" />
+      <div className="w-full max-w-md space-y-8 soft-card p-8">
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-white">Options Sniper</h1>
-          <p className="mt-1 text-sm text-slate-400">Enter your credentials to continue</p>
+          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-bdr-accent bg-charcoal">
+            <svg viewBox="0 0 24 24" className="h-6 w-6 text-emerald-soft" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="12" cy="12" r="9" />
+              <line x1="12" y1="3" x2="12" y2="21" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <circle cx="12" cy="12" r="3" fill="currentColor" />
+            </svg>
+          </div>
+          <h1 className="text-xl font-bold text-txt">
+            OPTIONS <span className="text-emerald-soft">SNIPER</span>
+          </h1>
+          <p className="mt-1 text-sm text-txt-muted">Enter your credentials to continue</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
-            <label htmlFor="username" className="block text-xs font-medium text-slate-300">
-              Username
-            </label>
+            <label htmlFor="username" className="block text-xs font-medium text-txt-secondary">Username</label>
             <input
-              id="username"
-              name="username"
-              autoComplete="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3.5 py-2 text-white placeholder-slate-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              id="username" name="username" autoComplete="username"
+              value={username} onChange={(e) => setUsername(e.target.value)} required
+              className="mt-1 block w-full rounded-[var(--radius-inner)] border border-bdr bg-charcoal px-3.5 py-2 text-txt placeholder-txt-dim focus:border-emerald-muted focus:ring-1 focus:ring-emerald-muted transition-colors"
               placeholder="demo"
             />
           </div>
 
           <div>
-            <label htmlFor="password" className="block text-xs font-medium text-slate-300">
-              Password
-            </label>
+            <label htmlFor="password" className="block text-xs font-medium text-txt-secondary">Password</label>
             <input
-              id="password"
-              name="password"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3.5 py-2 text-white placeholder-slate-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              id="password" name="password" type="password" autoComplete="current-password"
+              value={password} onChange={(e) => setPassword(e.target.value)} required
+              className="mt-1 block w-full rounded-[var(--radius-inner)] border border-bdr bg-charcoal px-3.5 py-2 text-txt placeholder-txt-dim focus:border-emerald-muted focus:ring-1 focus:ring-emerald-muted transition-colors"
               placeholder="••••••••"
             />
           </div>
 
           <div className="flex items-center justify-between">
-            <label htmlFor="fill-demo" className="text-xs text-slate-300">
+            <label htmlFor="fill-demo" className="text-xs text-txt-muted">
               Fill demo credentials (demo / Alpaca123!)
             </label>
             <Toggle checked={fillDemo} onChange={setFillDemo} />
           </div>
 
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p className="text-sm text-coral">{error}</p>}
 
           <button
-            type="submit"
-            disabled={submitting}
-            className="w-full rounded-lg bg-blue-600 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-60"
+            type="submit" disabled={submitting}
+            className="btn-primary w-full py-2.5 text-sm disabled:opacity-50"
           >
             {submitting ? "Signing in…" : "Sign In"}
           </button>

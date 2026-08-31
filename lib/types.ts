@@ -169,21 +169,23 @@ export interface PositionLeg {
 }
 
 export interface SpreadPosition {
-  id: string; // underlying|expiry|call
+  id: string; // unique per leg
+  groupId?: string; // shared ID for paired long+short legs of the same spread
   underlying: string;
   expiry: string;
   dte: number;
-  qty: number; // number of spreads (long leg qty)
+  qty: number; // contracts for this leg
   legs: PositionLeg[];
-  entryDebit: number; // net debit per share at entry
-  currentValue: number; // net value per share now
-  pnl: number; // $ per spread (x100 multiplier)
+  entryDebit: number; // avg entry price per share for this leg
+  currentValue: number; // current price per share for this leg
+  pnl: number; // unrealized $ P&L for this leg
   pnlPct: number;
   longStrike: number;
   shortStrike: number;
   stopLoss: number; // per-share value that triggers max-loss exit
   profitTarget: number; // per-share value that triggers profit-taking exit
   exitSignal: string | null; // reason if agent wants to exit
+  side: "long" | "short"; // whether this is a long or short leg
 }
 
 export interface ClosedTrade {

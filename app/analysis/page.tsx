@@ -14,18 +14,14 @@ export default function AnalysisPage() {
   const [data, setData] = useState<AnalysisData | null>(null);
 
   useEffect(() => {
-    if (!loading && !authenticated) {
-      router.replace("/login");
-    }
+    if (!loading && !authenticated) router.replace("/login");
   }, [authenticated, loading, router]);
 
-  useEffect(() => {
-    setData(loadAnalysisData());
-  }, []);
+  useEffect(() => { setData(loadAnalysisData()); }, []);
 
   if (loading || !authenticated) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-400">
+      <div className="flex min-h-screen items-center justify-center bg-obsidian text-txt-muted">
         Authenticating…
       </div>
     );
@@ -33,41 +29,28 @@ export default function AnalysisPage() {
 
   if (!data) {
     return (
-      <div className="mx-auto flex min-h-screen max-w-5xl flex-col items-center justify-center gap-4 bg-slate-950 px-4 text-center">
-        <h1 className="text-xl font-bold text-white">Market Analysis</h1>
-        <p className="text-sm text-slate-400">No scan data available yet. Run a scan from the dashboard first.</p>
-        <button
-          onClick={() => router.push("/")}
-          className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800"
-        >
-          ← Back to Dashboard
-        </button>
+      <div className="mx-auto flex min-h-screen max-w-5xl flex-col items-center justify-center gap-4 bg-obsidian px-4 text-center">
+        <h1 className="text-xl font-bold text-txt">Market Analysis</h1>
+        <p className="text-sm text-txt-muted">No scan data available yet. Run a scan from the dashboard first.</p>
+        <button onClick={() => router.push("/")} className="btn-ghost px-4 py-2 text-sm font-semibold">← Back to Dashboard</button>
       </div>
     );
   }
 
   return (
     <main className="mx-auto min-h-screen max-w-7xl px-4 py-6">
-      {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-bold text-white">Market Analysis</h1>
-          <p className="text-xs text-slate-500">Detailed market discovery, options intelligence &amp; news risk from the latest scan</p>
+          <h1 className="text-lg font-bold text-txt">Market Analysis</h1>
+          <p className="text-xs text-txt-dim">Detailed market discovery, options intelligence &amp; news risk from the latest scan</p>
         </div>
-        <button
-          onClick={() => router.push("/")}
-          className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800"
-        >
-          ← Dashboard
-        </button>
+        <button onClick={() => router.push("/")} className="btn-ghost px-4 py-2 text-sm font-semibold">← Dashboard</button>
       </div>
 
-      {/* Market Discovery */}
       <div className="mb-6">
         <MarketDiscoveryPanel discovery={data.discovery} />
       </div>
 
-      {/* Options Intelligence + News Risk side by side */}
       <div className="grid gap-4 lg:grid-cols-2">
         <OptionsIntelligencePanel intelligence={data.intelligence} />
         <NewsRiskPanel newsRisk={data.newsRisk} />
