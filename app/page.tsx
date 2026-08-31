@@ -17,10 +17,8 @@ import type {
 } from "@/lib/types";
 import { DecisionBadge, fmtMoney, fmtPct, LogPanel, ScoreBar, TrendBadge } from "./components/ui";
 import { PositionCharts } from "./components/PositionChart";
+import { saveAnalysisData } from "@/lib/analysisStore";
 import AlpacaMonitor from "./components/AlpacaMonitor";
-import MarketDiscoveryPanel from "./components/MarketDiscovery";
-import OptionsIntelligencePanel from "./components/OptionsIntelligence";
-import NewsRiskPanel from "./components/NewsRisk";
 
 const POLL_INTERVAL_MS = 60_000; // agent tick cadence while running
 
@@ -89,6 +87,7 @@ function DashboardContent() {
       setNewsRisk(data.newsRisk ?? null);
       setError(null);
       appendLog(data.log);
+      saveAnalysisData({ discovery: data.discovery ?? null, intelligence: data.intelligence ?? null, newsRisk: data.newsRisk ?? null });
     },
     [appendLog]
   );
@@ -278,6 +277,12 @@ function DashboardBody(props: {
           <input type="checkbox" checked={props.autoEnter} onChange={(e) => props.setAutoEnter(e.target.checked)} className="h-4 w-4 accent-emerald-500" />
           Auto-submit approved trades (score ≥ 75, risk ≤ 1%)
         </label>
+        <a
+          href="/analysis"
+          className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800"
+        >
+          📊 Analysis
+        </a>
         {props.running && (
           <span className="flex items-center gap-2 text-xs font-semibold text-emerald-400">
             <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
@@ -300,11 +305,6 @@ function DashboardBody(props: {
       <div className="mb-5">
         <h2 className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">Open Positions &amp; P&amp;L (Alpaca source of truth)</h2>
         <PositionCharts positions={props.positions} onClose={props.onClose} closing={props.closingId} />
-      </div>
-
-      {/* Market Discovery */}
-      <div className="mb-5">
-        <MarketDiscoveryPanel discovery={props.discovery} />
       </div>
 
       {/* Account + Best opportunity */}
@@ -368,12 +368,6 @@ function DashboardBody(props: {
             <p className="text-sm text-slate-500">{decision?.reason ?? "Run a scan to find opportunities."}</p>
           )}
         </div>
-      </div>
-
-      {/* Options Intelligence + News Risk (side by side) */}
-      <div className="mb-5 grid gap-4 lg:grid-cols-2">
-        <OptionsIntelligencePanel intelligence={props.intelligence} />
-        <NewsRiskPanel newsRisk={props.newsRisk} />
       </div>
 
       {/* Scanner table */}
