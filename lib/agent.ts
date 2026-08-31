@@ -179,10 +179,15 @@ export async function evaluateAndEnter(
     logEntry("warn", `WAIT: ${label} position sizing rounds to 0 spreads`, log);
     return { action: "WAIT", reason: "Position size rounds to zero spreads at this risk limit", score, riskPct };
   }
-  const existingCount = existingSpreads.filter((s) => s.underlying === cand.underlying).length;
-  if (existingCount >= MAX_POSITIONS_PER_UNDERLYING) {
-    logEntry("info", `WAIT: already have ${existingCount}/${MAX_POSITIONS_PER_UNDERLYING} open ${cand.underlying} positions`, log);
-    return { action: "WAIT", reason: `${existingCount} open ${cand.underlying} position(s) — limit ${MAX_POSITIONS_PER_UNDERLYING} per underlying`, score, riskPct };
+  const existingOnUnderlying = existingSpreads.filter((s) => s.underlying === cand.underlying);
+  if (existingOnUnderlying.length >= MAX_POSITIONS_PER_UNDERLYING) {
+    logEntry("info", `WAIT: already have ${existingOnUnderlying.length}/${MAX_POSITIONS_PER_UNDERLYING} open ${cand.underlying} positions`, log);
+    return { action: "WAIT", reason: `${existingOnUnderlying.length} open ${cand.underlying} position(s) — limit ${MAX_POSITIONS_PER_UNDERLYING} per underlying`, score, riskPct };
+  }
+  if (existingOnUnderlying.length > 0 && existingOnUnderlying.some((s) => s.pnlPct >= 0)) {
+    const profitable = existingOnUnderlying.filter((s) => s.pnlPct >= 0).length;
+    logEntry("info", `WAIT: ${cand.underlying} has ${profitable} profitable position(s) — only add when existing is at a loss`, log);
+    return { action: "WAIT", reason: `Existing ${cand.underlying} position is profitable — only add when at a loss`, score, riskPct };
   }
 
   if (!autoEnter) {
