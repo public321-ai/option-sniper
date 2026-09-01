@@ -392,8 +392,8 @@ export async function exitSpread(spread: SpreadPosition, reason: string, log: Ag
 
 /**
  * Build closed trade history from Alpaca FILL activities.
- * Groups fills by spread (underlying|expiry|call), separates entry vs exit,
- * and computes realized P&L per spread. Returns up to 10 most recent.
+ * Processes fills per-symbol to extract round-trips, then pairs long/short
+ * legs into spreads and computes realized P&L per spread. Returns up to 10 most recent.
  */
 export async function buildClosedTrades(): Promise<ClosedTrade[]> {
   let fills: AlpacaFillActivity[];
@@ -407,16 +407,6 @@ export async function buildClosedTrades(): Promise<ClosedTrade[]> {
   const optionFills = fills.filter((f) => parseOccSymbol(f.symbol));
   if (optionFills.length === 0) return [];
 
-  // Group fills by spread key: underlying|expiry|call
-  const groups = new Map<string, AlpacaFillActivity[]>();
-  for (const f of optionFills) {
-    const parsed = parseOccSymbol(f.symbol);
-    if (!parsed) continue;
-    const key = `${parsed.underlying}|${parsed.expiry}|${parsed.type}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(f);
-  }
-
   // Compute signed cash impact for a fill (Alpaca FILL activities lack net_amount)
   const fillCash = (f: AlpacaFillActivity): number => {
     const qty = Number(f.qty) || 0;
@@ -425,79 +415,157 @@ export async function buildClosedTrades(): Promise<ClosedTrade[]> {
     return f.side === "buy" ? -(qty * price * 100) : qty * price * 100;
   };
 
-  const trades: ClosedTrade[] = [];
-  for (const [key, legs] of groups) {
-    // Need at least 2 fills (entry + exit) for a complete round-trip
-    if (legs.length < 2) continue;
+  // Step 1: Group fills by symbol
+  const bySymbol = new Map<string, AlpacaFillActivity[]>();
+  for (const f of optionFills) {
+    if (!bySymbol.has(f.symbol)) bySymbol.set(f.symbol, []);
+    bySymbol.get(f.symbol)!.push(f);
+  }
 
-    // Sort by time ascending
-    legs.sort((a, b) => new Date(a.transaction_time).getTime() - new Date(b.transaction_time).getTime());
+  // Step 2: For each symbol, extract round-trips (entry → exit) via position tracking
+  interface RoundTrip {
+    symbol: string;
+    entrySide: "long" | "short";
+    qty: number;
+    entryFills: AlpacaFillActivity[];
+    exitFills: AlpacaFillActivity[];
+    entryCash: number;
+    exitCash: number;
+    entryDate: string;
+    exitDate: string;
+    parsed: NonNullable<ReturnType<typeof parseOccSymbol>>;
+  }
 
-    // Split fills into entry vs exit by tracking cumulative position per symbol.
-    // When all symbols return to net-zero qty, the entry is complete.
-    const symbolQty = new Map<string, number>();
-    let splitIdx = legs.length; // default: no exit found
-    for (let i = 0; i < legs.length; i++) {
-      const f = legs[i];
-      const prev = symbolQty.get(f.symbol) ?? 0;
+  const roundTrips: RoundTrip[] = [];
+
+  for (const [symbol, symFills] of bySymbol) {
+    const parsed = parseOccSymbol(symbol);
+    if (!parsed) continue;
+
+    symFills.sort((a, b) => new Date(a.transaction_time).getTime() - new Date(b.transaction_time).getTime());
+
+    let position = 0;
+    let entryFills: AlpacaFillActivity[] = [];
+    let exitFills: AlpacaFillActivity[] = [];
+    let entrySide: "long" | "short" | null = null;
+
+    for (const f of symFills) {
       const signed = f.side === "buy" ? Number(f.qty) : -Number(f.qty);
-      symbolQty.set(f.symbol, prev + signed);
-      // Check if ALL symbols have returned to zero (position fully closed)
-      if (i >= 1 && [...symbolQty.values()].every((v) => v === 0)) {
-        splitIdx = i + 1;
-        break;
+      const prev = position;
+      position += signed;
+
+      if (prev === 0 && position !== 0) {
+        // Opening new position
+        entryFills = [f];
+        exitFills = [];
+        entrySide = signed > 0 ? "long" : "short";
+      } else if (position !== 0 && Math.sign(signed) === Math.sign(prev)) {
+        // Adding to existing position (same direction)
+        entryFills.push(f);
+      } else if (prev !== 0 && position === 0) {
+        // Closing position completely
+        exitFills.push(f);
+
+        if (entrySide && entryFills.length > 0 && exitFills.length > 0) {
+          const qty = entryFills.reduce((s, ef) => s + Number(ef.qty), 0);
+          roundTrips.push({
+            symbol,
+            entrySide,
+            qty,
+            entryFills: [...entryFills],
+            exitFills: [...exitFills],
+            entryCash: entryFills.reduce((s, ef) => s + fillCash(ef), 0),
+            exitCash: exitFills.reduce((s, ef) => s + fillCash(ef), 0),
+            entryDate: entryFills[0].transaction_time,
+            exitDate: exitFills[exitFills.length - 1].transaction_time,
+            parsed,
+          });
+        }
+        entryFills = [];
+        exitFills = [];
+        entrySide = null;
+      } else if (prev !== 0 && position !== 0 && Math.sign(signed) !== Math.sign(prev)) {
+        // Reducing position (partial exit)
+        exitFills.push(f);
       }
     }
+  }
 
-    const entryFills = legs.slice(0, splitIdx);
-    const exitFills = legs.slice(splitIdx);
+  // Step 3: Group round-trips by underlying|expiry|type, then pair longs with shorts
+  const byGroup = new Map<string, RoundTrip[]>();
+  for (const rt of roundTrips) {
+    const gk = `${rt.parsed.underlying}|${rt.parsed.expiry}|${rt.parsed.type}`;
+    if (!byGroup.has(gk)) byGroup.set(gk, []);
+    byGroup.get(gk)!.push(rt);
+  }
 
-    // Must have both entry and exit fills
-    if (exitFills.length === 0) continue;
+  const trades: ClosedTrade[] = [];
 
-    const entryNet = entryFills.reduce((sum, f) => sum + fillCash(f), 0);
-    const exitNet = exitFills.reduce((sum, f) => sum + fillCash(f), 0);
+  for (const [groupKey, rts] of byGroup) {
+    const longs = rts
+      .filter((r) => r.entrySide === "long")
+      .sort((a, b) => new Date(a.entryDate).getTime() - new Date(b.entryDate).getTime());
+    const shorts = rts
+      .filter((r) => r.entrySide === "short")
+      .sort((a, b) => new Date(a.entryDate).getTime() - new Date(b.entryDate).getTime());
 
-    // For a debit spread: entryNet < 0 (paid), exitNet > 0 (received)
-    const realizedPnl = exitNet + entryNet;
-    const entryDebit = Math.abs(entryNet) / 100; // per-share debit
-    const exitCredit = exitNet / 100; // per-share credit
+    // Match each long leg to the short leg with closest entry time (short strike > long strike)
+    const usedShorts = new Set<number>();
 
-    if (entryDebit === 0 || isNaN(entryDebit)) continue;
+    for (const long of longs) {
+      let bestIdx = -1;
+      let bestTimeDiff = Infinity;
 
-    const parts = key.split("|");
-    const underlying = parts[0];
-    const expiry = parts[1];
+      for (let i = 0; i < shorts.length; i++) {
+        if (usedShorts.has(i)) continue;
+        const short = shorts[i];
+        if (short.parsed.strike <= long.parsed.strike) continue;
+        const timeDiff = Math.abs(new Date(short.entryDate).getTime() - new Date(long.entryDate).getTime());
+        if (timeDiff < bestTimeDiff) {
+          bestTimeDiff = timeDiff;
+          bestIdx = i;
+        }
+      }
 
-    // Extract strikes from entry fills
-    const parsedLegs = entryFills.map((f) => parseOccSymbol(f.symbol)).filter(Boolean);
-    const strikes = parsedLegs.map((p) => p!.strike);
-    const longStrike = Math.min(...strikes);
-    const shortStrike = Math.max(...strikes);
+      if (bestIdx === -1) continue;
+      usedShorts.add(bestIdx);
 
-    const qty = Math.round(Math.abs(Number(entryFills.find((f) => f.side === "buy")?.qty ?? 1)));
+      const short = shorts[bestIdx];
+      const entryCash = long.entryCash + short.entryCash;
+      const exitCash = long.exitCash + short.exitCash;
+      const realizedPnl = exitCash + entryCash;
+      const qty = Math.min(long.qty, short.qty);
+      const entryDebit = Math.abs(entryCash) / (qty * 100);
+      const exitCredit = exitCash / (qty * 100);
 
-    trades.push({
-      id: key,
-      underlying,
-      longStrike,
-      shortStrike,
-      expiry,
-      entryDate: entryFills[0].transaction_time,
-      exitDate: exitFills[exitFills.length - 1].transaction_time,
-      entryDebit: Math.round(entryDebit * 1000) / 1000,
-      exitCredit: Math.round(exitCredit * 1000) / 1000,
-      qty,
-      pnl: Math.round(realizedPnl * 100) / 100,
-      pnlPct: Math.round((realizedPnl / Math.abs(entryNet)) * 10000) / 100,
-      legs: [...entryFills, ...exitFills].map((f) => ({
-        symbol: f.symbol,
-        side: f.side,
-        qty: Number(f.qty),
-        price: Number(f.price),
-        netAmount: fillCash(f),
-      })),
-    });
+      if (entryDebit === 0 || isNaN(entryDebit)) continue;
+
+      const parts = groupKey.split("|");
+      const underlying = parts[0];
+      const expiry = parts[1];
+
+      trades.push({
+        id: `${groupKey}|${long.parsed.strike}-${short.parsed.strike}`,
+        underlying,
+        longStrike: long.parsed.strike,
+        shortStrike: short.parsed.strike,
+        expiry,
+        entryDate: long.entryDate,
+        exitDate: [long.exitDate, short.exitDate].sort()[1],
+        entryDebit: Math.round(entryDebit * 1000) / 1000,
+        exitCredit: Math.round(exitCredit * 1000) / 1000,
+        qty,
+        pnl: Math.round(realizedPnl * 100) / 100,
+        pnlPct: Math.round((realizedPnl / Math.abs(entryCash)) * 10000) / 100,
+        legs: [...long.entryFills, ...short.entryFills, ...long.exitFills, ...short.exitFills].map((f) => ({
+          symbol: f.symbol,
+          side: f.side,
+          qty: Number(f.qty),
+          price: Number(f.price),
+          netAmount: fillCash(f),
+        })),
+      });
+    }
   }
 
   // Sort by exit date descending, return last 10
