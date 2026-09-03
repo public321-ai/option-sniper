@@ -271,12 +271,12 @@ function DashboardBody(props: {
 }) {
   const { best, decision } = props;
   return (
-    <main className="mx-auto max-w-7xl px-4 py-6">
-      {/* ── Premium Header ── */}
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+    <div className="mx-auto max-w-7xl px-4 py-6">
+      {/* ── Header ── */}
+      <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full border border-bdr-accent bg-charcoal">
-            <svg viewBox="0 0 24 24" className="h-4.5 w-4.5 text-emerald-soft" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-full border border-bdr-accent bg-charcoal" role="img" aria-label="Options Sniper logo">
+            <svg viewBox="0 0 24 24" className="h-4.5 w-4.5 text-emerald-soft" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
               <circle cx="12" cy="12" r="9" />
               <line x1="12" y1="3" x2="12" y2="21" />
               <line x1="3" y1="12" x2="21" y2="12" />
@@ -290,8 +290,8 @@ function DashboardBody(props: {
             <p className="text-[11px] text-txt-muted">Autonomous Bull Call Spread Agent · Alpaca Options Alpha</p>
           </div>
         </div>
-        <div className="soft-card-inner flex items-center gap-2.5 px-4 py-2">
-          <span className="h-2 w-2 rounded-full bg-amber-soft" />
+        <div className="soft-card-inner flex items-center gap-2.5 px-4 py-2" role="status">
+          <span className="h-2 w-2 rounded-full bg-amber-soft" aria-hidden="true" />
           <div>
             <p className="text-[11px] font-bold tracking-widest text-amber-soft">PAPER TRADING</p>
             <p className="text-[10px] text-txt-muted">
@@ -302,20 +302,21 @@ function DashboardBody(props: {
         <button
           onClick={props.onLogout}
           className="btn-ghost px-3 py-1.5 text-xs"
+          type="button"
         >
           Log out
         </button>
-      </div>
+      </header>
 
       {/* ── Error banner ── */}
       {props.error && (
-        <div className="mb-4 rounded-[var(--radius-card)] border border-coral/30 bg-coral-dim px-4 py-3 text-sm text-coral">
+        <aside className="mb-4 rounded-[var(--radius-card)] border border-coral/30 bg-coral-dim px-4 py-3 text-sm text-coral" role="alert">
           <strong>Error:</strong> {props.error}
-        </div>
+        </aside>
       )}
 
       {/* ── Controls ── */}
-      <div className="mb-5 soft-card flex flex-wrap items-center gap-3 p-4">
+      <nav className="mb-5 soft-card flex flex-wrap items-center gap-3 p-4" aria-label="Agent controls">
         <button
           onClick={() => props.setRunning((r) => !r)}
           className={`rounded-[var(--radius-badge)] px-4 py-2 text-sm font-bold tracking-wide transition-all ${
@@ -323,6 +324,8 @@ function DashboardBody(props: {
               ? "bg-coral-muted text-white hover:bg-coral"
               : "btn-primary"
           }`}
+          type="button"
+          aria-pressed={props.running}
         >
           {props.running ? "■ STOP AGENT" : "▶ START AGENT"}
         </button>
@@ -330,6 +333,7 @@ function DashboardBody(props: {
           onClick={props.onScan}
           disabled={props.busy !== null}
           className="btn-ghost px-4 py-2 text-sm font-bold tracking-wide text-cyan-soft border-cyan-muted/30 hover:border-cyan-muted/60 hover:text-cyan-soft disabled:opacity-40"
+          type="button"
         >
           {props.busy === "scan" ? "SCANNING…" : "🔍 SCAN NOW"}
         </button>
@@ -337,6 +341,7 @@ function DashboardBody(props: {
           onClick={props.onRefresh}
           disabled={props.busy !== null}
           className="btn-ghost px-4 py-2 text-sm font-semibold disabled:opacity-40"
+          type="button"
         >
           ⟳ REFRESH
         </button>
@@ -351,12 +356,12 @@ function DashboardBody(props: {
           📊 Analysis
         </a>
         {props.running && (
-          <span className="flex items-center gap-2 text-xs font-semibold text-emerald-soft">
-            <span className="pulse-soft h-2 w-2 rounded-full bg-emerald-soft" />
+          <span className="flex items-center gap-2 text-xs font-semibold text-emerald-soft" role="status" aria-live="polite">
+            <span className="pulse-soft h-2 w-2 rounded-full bg-emerald-soft" aria-hidden="true" />
             AGENT RUNNING · tick every {POLL_INTERVAL_MS / 1000}s
           </span>
         )}
-      </div>
+      </nav>
 
       {/* ── Alpaca Integration Monitor ── */}
       <AlpacaMonitor
@@ -369,21 +374,21 @@ function DashboardBody(props: {
       />
 
       {/* ── Closed Trades ── */}
-      <div className="mb-5">
-        <h2 className="mb-2 text-[11px] font-bold uppercase tracking-widest text-txt-muted">Closed Trades — Last 10 P&amp;L</h2>
+      <section className="mb-5" aria-labelledby="closed-trades-heading">
+        <h2 id="closed-trades-heading" className="mb-2 text-[11px] font-bold uppercase tracking-widest text-txt-muted">Closed Trades — Last 10 P&amp;L</h2>
         <ClosedTradesPanel trades={props.closedTrades} />
-      </div>
+      </section>
 
       {/* ── Open Positions ── */}
-      <div className="mb-5">
-        <h2 className="mb-2 text-[11px] font-bold uppercase tracking-widest text-txt-muted">Open Positions &amp; P&amp;L</h2>
+      <section className="mb-5" aria-labelledby="open-positions-heading">
+        <h2 id="open-positions-heading" className="mb-2 text-[11px] font-bold uppercase tracking-widest text-txt-muted">Open Positions &amp; P&amp;L</h2>
         <PositionCharts positions={props.positions} onClose={props.onClose} closing={props.closingId} />
-      </div>
+      </section>
 
       {/* ── Account + Best opportunity ── */}
-      <div className="mb-5 grid gap-4 lg:grid-cols-3">
-        <div className="soft-card p-4">
-          <h2 className="mb-3 text-[11px] font-bold uppercase tracking-widest text-txt-muted">
+      <section className="mb-5 grid gap-4 lg:grid-cols-3" aria-labelledby="account-heading">
+        <article className="soft-card p-4">
+          <h2 id="account-heading" className="mb-3 text-[11px] font-bold uppercase tracking-widest text-txt-muted">
             Alpaca Account {props.isMock && <span className="text-amber-soft">(demo)</span>}
           </h2>
           {props.account ? (
@@ -397,9 +402,9 @@ function DashboardBody(props: {
           ) : (
             <p className="text-sm text-txt-muted">Loading account…</p>
           )}
-        </div>
+        </article>
 
-        <div className="soft-card p-4 lg:col-span-2">
+        <article className="soft-card p-4 lg:col-span-2">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-[11px] font-bold uppercase tracking-widest text-txt-muted">Best Opportunity</h2>
             <DecisionBadge decision={decision} />
@@ -430,6 +435,7 @@ function DashboardBody(props: {
                     onClick={props.onSubmit}
                     disabled={props.busy !== null}
                     className="btn-primary ml-auto px-4 py-2 text-sm disabled:opacity-40"
+                    type="button"
                   >
                     {props.busy === "submit" ? "SUBMITTING…" : `SUBMIT TRADE${decision.suggestedQty ? ` (${decision.suggestedQty}x)` : ""}`}
                   </button>
@@ -440,27 +446,27 @@ function DashboardBody(props: {
           ) : (
             <p className="text-sm text-txt-muted">{decision?.reason ?? "Run a scan to find opportunities."}</p>
           )}
-        </div>
-      </div>
+        </article>
+      </section>
 
       {/* ── Scanner table ── */}
-      <div className="mb-5">
-        <h2 className="mb-2 text-[11px] font-bold uppercase tracking-widest text-txt-muted">
+      <section className="mb-5" aria-labelledby="scanner-heading">
+        <h2 id="scanner-heading" className="mb-2 text-[11px] font-bold uppercase tracking-widest text-txt-muted">
           Market Scanner — {props.scan.length ? props.scan.map((r) => r.symbol).join(" · ") : "No symbols scanned yet"}
         </h2>
         <div className="overflow-x-auto rounded-[var(--radius-card)] border border-bdr">
           <table className="soft-table">
             <thead>
               <tr>
-                <th>Symbol</th>
-                <th>Price</th>
-                <th>20MA</th>
-                <th>50MA</th>
-                <th>RSI-14</th>
-                <th>Momentum</th>
-                <th>Trend</th>
-                <th>Best Spread</th>
-                <th>Score</th>
+                <th scope="col">Symbol</th>
+                <th scope="col">Price</th>
+                <th scope="col">20MA</th>
+                <th scope="col">50MA</th>
+                <th scope="col">RSI-14</th>
+                <th scope="col">Momentum</th>
+                <th scope="col">Trend</th>
+                <th scope="col">Best Spread</th>
+                <th scope="col">Score</th>
               </tr>
             </thead>
             <tbody>
@@ -494,17 +500,17 @@ function DashboardBody(props: {
             </tbody>
           </table>
         </div>
-      </div>
+      </section>
 
       {/* ── Agent Log ── */}
-      <div>
-        <h2 className="mb-2 text-[11px] font-bold uppercase tracking-widest text-txt-muted">Agent Activity Log</h2>
+      <section aria-labelledby="agent-log-heading">
+        <h2 id="agent-log-heading" className="mb-2 text-[11px] font-bold uppercase tracking-widest text-txt-muted">Agent Activity Log</h2>
         <LogPanel log={props.log} />
-      </div>
+      </section>
 
       <footer className="mt-8 border-t border-bdr pt-4 text-center text-[11px] text-txt-dim">
         Options Sniper · Alpaca Options Alpha Agents hackathon · Paper trading only — not investment advice.
       </footer>
-    </main>
+    </div>
   );
 }
